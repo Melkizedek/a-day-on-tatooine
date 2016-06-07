@@ -24,7 +24,7 @@ const camera = {
 // scenegraph
 var root = null;
 var leiaRotNode;
-var billRotNode;
+var billTranNode;
 var volleyballTranNode;
 var volleyballDirection = 0.0;
 var volleyballLocation = 0.0;
@@ -85,8 +85,7 @@ function createSceneGraph(resources) {
   let billModelNode = new RenderSGNode(billboard);
   let billTexNode = new AdvancedTextureSGNode(resources.tex);
   let billMatNode = new MaterialSGNode();
-  let billTranNode = new TransformationSGNode(glm.transform({translate: [150, -50, -100]}));
-  billRotNode = new TransformationSGNode(glm.transform({rotateX: 0}));
+  billTranNode = new TransformationSGNode(glm.transform({translate: [150, -50, -100]}));
 
   // volleyball
   let volleyball = makeSphere(5, 200, 0);
@@ -168,12 +167,11 @@ function createSceneGraph(resources) {
   root.append(leiaTranNode);
 
   // show billboard
-  billRotNode.append(billMatNode);
   billMatNode.append(billTexNode);
   billTexNode.append(enableTexNode);
   billTexNode.append(billModelNode);
   billShaderNode.append(billTexNode);
-  billTranNode.append(billRotNode);
+  billTranNode.append(billMatNode);
   root.append(billTranNode);
 
   // show volleyball
@@ -636,52 +634,14 @@ function render(timeInMilliseconds) {
   //translate volleyball between two tusken
   if(volleyballLocation == 0){
     volleyballDirection = 1.0;
-  } else if(volleyballLocation == 100){
+  } else if(volleyballLocation >= 100){
     volleyballDirection = -1.0;
   }
   var y = -Math.sin(Math.PI/100 * volleyballLocation) * 100;
   volleyballTranNode.matrix = glm.translate(200 + volleyballLocation, y, 20);
-
   volleyballLocation += volleyballDirection;
 
 
-
-  //leiaRotNode.matrix = glm.rotateY(timeInMilliseconds*-0.01);
-  //billRotNode.matrix = glm.rotateY(timeInMilliseconds*-0.1);
-
-/*
-  //http://nehe.gamedev.net/article/billboarding_how_to/18011/
-  // rotate Billboard towards camera
-  // calculate look vector of billboard center towards camera point
-  var cameraPos = vec3.create();
-  cameraPos = vec3.fromValues(camera.position.x, camera.position.y, camera.position.z);
-  // position of billboard: [150, -50, -100]
-  // !!!TODO: compute actual center point!!!
-  var billPos = vec3.create();
-  billPos = [150, -50, -100];
-  var billLook = vec3.subtract(vec3.create(), cameraPos, billPos);
-  vec3.normalize(billLook, billLook);
-
-  // calculate right vector of billboard (by calculating cross poduct of the look vector and the up vector of the camera)
-  var billRight = vec3.create();
-  var cameraUp = vec3.create();
-  cameraUp = [0,1,0]; //TODO: calculate actual up-vector
-  vec3.normalize(cameraUp, cameraUp);
-  billRight = vec3.cross(vec3.create(), cameraUp, billLook);
-
-  // calculate actual billboard up vector
-  var billUp = vec3.create();
-  billUp = vec3.cross(vec3.create(), billLook, billRight);
-
-  // create rotation matrix out of calculated vectors
-  var billTransformation =
-  [billRight[0], billRight[1], billRight[2], 0,
-  billUp[0], billUp[1], billUp[2], 0,
-  billLook[0], billLook[1], billLook[2], 0,
-  0, 0, 0, 1];
-
-  billRotNode.matrix = mat4.multiply(mat4.create(), billRotNode.matrix, billTransformation);
-*/
 
   gl.clearColor(0.9, 0.9, 0.9, 1.0);
 
@@ -709,6 +669,30 @@ function render(timeInMilliseconds) {
   camera.direction.z = lookAtMatrix[10];
 
   //console.log("rotationx: " + camera.rotation.x.toFixed(2) + "  |  rotationy: " + camera.rotation.y.toFixed(2) + "  |  x:" + camera.position.x.toFixed(2) + " y:" + camera.position.y.toFixed(2) + " z:" + camera.position.z.toFixed(2) + "  |  dirx:" + camera.direction.x.toFixed(2) + " diry:" + camera.direction.y.toFixed(2) + " dirz:" + camera.direction.z.toFixed(2));
+
+  //billboard
+  //https://swiftcoder.wordpress.com/2008/11/25/constructing-a-billboard-matrix/
+  var billTransformation =
+  [
+  1, 0, 0, 0,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1
+  ];
+  billTransformation[0] = context.viewMatrix[0];
+  billTransformation[1] = context.viewMatrix[4];
+  billTransformation[2] = context.viewMatrix[8];
+  billTransformation[4] = context.viewMatrix[1];
+  billTransformation[5] = context.viewMatrix[5];
+  billTransformation[6] = context.viewMatrix[9];
+  billTransformation[8] = context.viewMatrix[2];
+  billTransformation[9] = context.viewMatrix[6];
+  billTransformation[10] = context.viewMatrix[10];
+  billTransformation[12] = billTranNode.matrix[12];
+  billTransformation[13] = billTranNode.matrix[13];
+  billTransformation[14] = billTranNode.matrix[14];
+  billTranNode.matrix = billTransformation;
+
 
   //render scenegraph
   root.render(context);
