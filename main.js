@@ -22,11 +22,17 @@ const camera = {
 };
 
 // scenegraph
+var timePrev = 0;
 var root = null;
 var leiaRotNode;
 var billTranNode;
+
+
+// animation scenes
+var volleyballCoordinates = [200.0, 0, 0];
 var volleyballTranNode;
-var volleyballDirection = 0.0;
+var volleyballDirection = 1.0;
+var volleyballSpeed = 0;
 var volleyballLocation = 0.0;
 
 /**
@@ -88,12 +94,12 @@ function createSceneGraph(resources) {
   billTranNode = new TransformationSGNode(glm.transform({translate: [150, -50, -100]}));
 
   // volleyball
-  let volleyball = makeSphere(5, 200, 0);
+  let volleyball = makeSphere(5, 0, 0);
   let volleyballShaderNode = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));
   let volleyballModelNode = new RenderSGNode(volleyball);
   let volleyballTexNode = new AdvancedTextureSGNode(resources.sunTex);
   let volleyballMatNode = new MaterialSGNode();
-  volleyballTranNode = new TransformationSGNode(glm.transform({translate: [200, 0, 0]}));
+  volleyballTranNode = new TransformationSGNode(glm.transform({translate: [volleyballCoordinates[0], volleyballCoordinates[1], volleyballCoordinates[2]]}));
 
   // tusken 1
   let tusken1 = resources.tusken;
@@ -101,7 +107,7 @@ function createSceneGraph(resources) {
   let tuskenModelNode1 = new RenderSGNode(tusken1);
   let tuskenTexNode1 = new AdvancedTextureSGNode(resources.leiaTex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
   let tuskenMatNode1 = new MaterialSGNode();
-  let tuskenTranNode1 = new TransformationSGNode(glm.transform({translate: [200, 0, 0], rotateX: 180, rotateY: 90}));
+  let tuskenTranNode1 = new TransformationSGNode(glm.transform({translate: [volleyballCoordinates[0], volleyballCoordinates[1], volleyballCoordinates[2]], rotateX: 180, rotateY: 90}));
 
   // tusken 2
   let tusken2 = resources.tusken;
@@ -109,7 +115,7 @@ function createSceneGraph(resources) {
   let tuskenModelNode2 = new RenderSGNode(tusken2);
   let tuskenTexNode2 = new AdvancedTextureSGNode(resources.leiaTex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
   let tuskenMatNode2 = new MaterialSGNode();
-  let tuskenTranNode2 = new TransformationSGNode(glm.transform({translate: [300, 0, 0], rotateX: 180, rotateY: -90}));
+  let tuskenTranNode2 = new TransformationSGNode(glm.transform({translate: [volleyballCoordinates[0] + 100, volleyballCoordinates[1], volleyballCoordinates[2]], rotateX: 180, rotateY: -90}));
 
   // leia
   let leia = resources.leia;
@@ -631,15 +637,13 @@ function calculateNormals(vertexTriangles, vertices, normal, forcePointUpwards) 
  * render one frame
  */
 function render(timeInMilliseconds) {
-  //translate volleyball between two tusken
-  if(volleyballLocation == 0){
-    volleyballDirection = 1.0;
-  } else if(volleyballLocation >= 100){
-    volleyballDirection = -1.0;
-  }
-  var y = -Math.sin(Math.PI/100 * volleyballLocation) * 100;
-  volleyballTranNode.matrix = glm.translate(200 + volleyballLocation, y, 20);
-  volleyballLocation += volleyballDirection;
+  //calculate delta time for animation
+  //convert timeInMilliseconds in seconds
+  var timeNow = timeInMilliseconds / 1000;
+  var timeDelta = timeNow - timePrev;
+  timePrev = timeNow;
+
+  renderVolleyballScene(timeDelta);
 
 
 
@@ -670,6 +674,29 @@ function render(timeInMilliseconds) {
 
   //console.log("rotationx: " + camera.rotation.x.toFixed(2) + "  |  rotationy: " + camera.rotation.y.toFixed(2) + "  |  x:" + camera.position.x.toFixed(2) + " y:" + camera.position.y.toFixed(2) + " z:" + camera.position.z.toFixed(2) + "  |  dirx:" + camera.direction.x.toFixed(2) + " diry:" + camera.direction.y.toFixed(2) + " dirz:" + camera.direction.z.toFixed(2));
 
+  renderBillboard(context);
+
+  //render scenegraph
+  root.render(context);
+
+  //request another call as soon as possible
+  requestAnimationFrame(render);
+}
+
+function renderVolleyballScene(timeDelta){
+  //translate volleyball between two tusken
+  if(volleyballLocation <= 0){
+    volleyballDirection = 1.0;
+  } else if(volleyballLocation >= 100){
+    volleyballDirection = -1.0;
+  }
+  volleyballSpeed = 60.0 * timeDelta * volleyballDirection;
+  var y = -Math.sin(Math.PI/100 * volleyballLocation) * 100;
+  volleyballTranNode.matrix = glm.translate(volleyballCoordinates[0] + volleyballLocation, volleyballCoordinates[1] + y, volleyballCoordinates[2] + 20);
+  volleyballLocation += volleyballSpeed;
+}
+
+function renderBillboard(context){
   //billboard
   //https://swiftcoder.wordpress.com/2008/11/25/constructing-a-billboard-matrix/
   var billTransformation =
@@ -692,13 +719,6 @@ function render(timeInMilliseconds) {
   billTransformation[13] = billTranNode.matrix[13];
   billTransformation[14] = billTranNode.matrix[14];
   billTranNode.matrix = billTransformation;
-
-
-  //render scenegraph
-  root.render(context);
-
-  //request another call as soon as possible
-  requestAnimationFrame(render);
 }
 
 //load the shader resources using a utility function
