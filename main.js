@@ -5,8 +5,8 @@ var gl = null,
 // camera control, set starting viewpoint here!
 const camera = {
   rotation: {
-    x: 90,
-    y: 20
+    x: 89.6,
+    y: 19.95
   },
   position: {
     x: 200,
@@ -21,19 +21,21 @@ const camera = {
   speed: 10  // TODO choose speed
 };
 
+var cameraFree = true;
+
 // scenegraph
 var timePrev = 0;
 var root = null;
 var leiaRotNode;
 var billTranNode;
 
-
 // animation scenes
-var volleyballCoordinates = [200.0, 0, 0];
+var volleyballSceneTranNode;
 var volleyballTranNode;
 var volleyballDirection = 1.0;
 var volleyballSpeed = 0;
-var volleyballLocation = 0.0;
+var volleyballLocation = 0;
+var volleyballDistance = 100.0;
 
 /**
  * initializes OpenGL context, compile shader, and load buffers
@@ -91,15 +93,15 @@ function createSceneGraph(resources) {
   let billModelNode = new RenderSGNode(billboard);
   let billTexNode = new AdvancedTextureSGNode(resources.tex);
   let billMatNode = new MaterialSGNode();
-  billTranNode = new TransformationSGNode(glm.transform({translate: [150, -50, -100]}));
+  billTranNode = new TransformationSGNode(glm.transform({translate: [50, -50, -100]}));
 
   // volleyball
-  let volleyball = makeSphere(5, 0, 0);
+  let volleyball = makeSphere(4, 0, 0);
   let volleyballShaderNode = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));
   let volleyballModelNode = new RenderSGNode(volleyball);
   let volleyballTexNode = new AdvancedTextureSGNode(resources.sunTex);
   let volleyballMatNode = new MaterialSGNode();
-  volleyballTranNode = new TransformationSGNode(glm.transform({translate: [volleyballCoordinates[0], volleyballCoordinates[1], volleyballCoordinates[2]]}));
+  volleyballTranNode = new TransformationSGNode(glm.transform({translate: [0, -15, 0]}));
 
   // tusken 1
   let tusken1 = resources.tusken;
@@ -107,7 +109,7 @@ function createSceneGraph(resources) {
   let tuskenModelNode1 = new RenderSGNode(tusken1);
   let tuskenTexNode1 = new AdvancedTextureSGNode(resources.leiaTex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
   let tuskenMatNode1 = new MaterialSGNode();
-  let tuskenTranNode1 = new TransformationSGNode(glm.transform({translate: [volleyballCoordinates[0], volleyballCoordinates[1], volleyballCoordinates[2]], rotateX: 180, rotateY: 90}));
+  let tuskenTranNode1 = new TransformationSGNode(glm.transform({rotateX: 180, rotateY: 90}));
 
   // tusken 2
   let tusken2 = resources.tusken;
@@ -115,7 +117,9 @@ function createSceneGraph(resources) {
   let tuskenModelNode2 = new RenderSGNode(tusken2);
   let tuskenTexNode2 = new AdvancedTextureSGNode(resources.leiaTex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
   let tuskenMatNode2 = new MaterialSGNode();
-  let tuskenTranNode2 = new TransformationSGNode(glm.transform({translate: [volleyballCoordinates[0] + 100, volleyballCoordinates[1], volleyballCoordinates[2]], rotateX: 180, rotateY: -90}));
+  let tuskenTranNode2 = new TransformationSGNode(glm.transform({translate: [volleyballDistance, 0, 0], rotateX: 180, rotateY: -90}));
+
+  volleyballSceneTranNode = new TransformationSGNode(glm.transform({translate: [150, 0, 0], scale: 0.5}));
 
   // leia
   let leia = resources.leia;
@@ -186,7 +190,6 @@ function createSceneGraph(resources) {
   volleyballTexNode.append(enableTexNode);
   volleyballTexNode.append(volleyballModelNode);
   volleyballShaderNode.append(volleyballTexNode);
-  root.append(volleyballTranNode);
 
   // show tusken1
   tuskenTranNode1.append(tuskenMatNode1);
@@ -194,7 +197,6 @@ function createSceneGraph(resources) {
   tuskenTexNode1.append(enableTexNode);
   tuskenTexNode1.append(tuskenModelNode1);
   tuskenShaderNode1.append(tuskenTexNode1);
-  root.append(tuskenTranNode1);
 
   // show tusken2
   tuskenTranNode2.append(tuskenMatNode2);
@@ -202,7 +204,11 @@ function createSceneGraph(resources) {
   tuskenTexNode2.append(enableTexNode);
   tuskenTexNode2.append(tuskenModelNode2);
   tuskenShaderNode2.append(tuskenTexNode2);
-  root.append(tuskenTranNode2);
+
+  volleyballSceneTranNode.append(volleyballTranNode);
+  volleyballSceneTranNode.append(tuskenTranNode1);
+  volleyballSceneTranNode.append(tuskenTranNode2);
+  root.append(volleyballSceneTranNode);
 
   sphereTranNode.append(sphereMatNode);
   sphereMatNode.append(sphereTexNode);
@@ -683,17 +689,28 @@ function render(timeInMilliseconds) {
   requestAnimationFrame(render);
 }
 
-function renderVolleyballScene(timeDelta){
-  //translate volleyball between two tusken
-  if(volleyballLocation <= 0){
-    volleyballDirection = 1.0;
-  } else if(volleyballLocation >= 100){
-    volleyballDirection = -1.0;
+function cameraIsInRadius(point){
+  var distance = Math.sqrt(Math.pow(point[0] - camera.position.x, 2) + Math.pow(point[1] - camera.position.y, 2) + Math.pow(point[2] - camera.position.z, 2))
+  if(distance <= 250){
+    return true;
   }
-  volleyballSpeed = 60.0 * timeDelta * volleyballDirection;
-  var y = -Math.sin(Math.PI/100 * volleyballLocation) * 100;
-  volleyballTranNode.matrix = glm.translate(volleyballCoordinates[0] + volleyballLocation, volleyballCoordinates[1] + y, volleyballCoordinates[2] + 20);
-  volleyballLocation += volleyballSpeed;
+  return false;
+}
+
+function renderVolleyballScene(timeDelta){
+  if(cameraIsInRadius([volleyballSceneTranNode.matrix[12] + (volleyballDistance / 2), volleyballSceneTranNode.matrix[13], volleyballSceneTranNode.matrix[14]])){
+    //translate volleyball between two tusken
+    if(volleyballLocation <= 0){
+      volleyballDirection = 1.0;
+    } else if(volleyballLocation >= volleyballDistance){
+      volleyballDirection = -1.0;
+    }
+    volleyballSpeed = 60.0 * timeDelta * volleyballDirection;
+
+    var y = -Math.sin(Math.PI/volleyballDistance * volleyballLocation) * volleyballDistance;
+    volleyballTranNode.matrix = glm.translate(volleyballLocation, y - 15, 0);
+    volleyballLocation += volleyballSpeed;
+  }
 }
 
 function renderBillboard(context){
@@ -770,14 +787,16 @@ function initInteraction(canvas) {
     mouse.leftButtonDown = event.button === 0;
   });
   canvas.addEventListener('mousemove', function(event) {
-    const pos = toPos(event);
-    const delta = { x : mouse.pos.x - pos.x, y: mouse.pos.y - pos.y };
-    if (mouse.leftButtonDown) {
-      //add the relative movement of the mouse to the rotation variables
-  		camera.rotation.x -= delta.x / 1000;
-  		camera.rotation.y -= delta.y / 1000;
+    if(cameraFree){
+      const pos = toPos(event);
+      const delta = { x : mouse.pos.x - pos.x, y: mouse.pos.y - pos.y };
+      if (mouse.leftButtonDown) {
+        //add the relative movement of the mouse to the rotation variables
+    		camera.rotation.x -= delta.x / 1000;
+    		camera.rotation.y -= delta.y / 1000;
+      }
+      mouse.pos = pos;
     }
-    mouse.pos = pos;
   });
   canvas.addEventListener('mouseup', function(event) {
     mouse.pos = toPos(event);
@@ -795,15 +814,17 @@ function initInteraction(canvas) {
   // forward/backward movement
   // TODO not sure if working correctly (passing through some axis)
   document.addEventListener('keydown', function(event) {
-    if(event.code === 'ArrowUp') {
-      camera.position.x -= camera.direction.x * camera.speed;
-      camera.position.y -= camera.direction.y * camera.speed;
-      camera.position.z -= camera.direction.z * camera.speed;
+    if(cameraFree){
+      if(event.code === 'ArrowUp') {
+        camera.position.x -= camera.direction.x * camera.speed;
+        camera.position.y -= camera.direction.y * camera.speed;
+        camera.position.z -= camera.direction.z * camera.speed;
 
-    } else if(event.code === 'ArrowDown') {
-      camera.position.x += camera.direction.x * camera.speed;
-      camera.position.y += camera.direction.y * camera.speed;
-      camera.position.z += camera.direction.z * camera.speed;
+      } else if(event.code === 'ArrowDown') {
+        camera.position.x += camera.direction.x * camera.speed;
+        camera.position.y += camera.direction.y * camera.speed;
+        camera.position.z += camera.direction.z * camera.speed;
+      }
     }
   })
 }
