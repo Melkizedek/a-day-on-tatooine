@@ -21,7 +21,7 @@ const camera = {
   speed: 10  // TODO choose speed
 };
 
-var cameraFree = true;
+var cameraFree = false;
 
 // scenegraph
 var timePrev = 0;
@@ -651,6 +651,8 @@ function render(timeInMilliseconds) {
 
   renderVolleyballScene(timeDelta);
 
+  console.log("cameraFree: " + cameraFree);
+
 
 
   gl.clearColor(0.9, 0.9, 0.9, 1.0);
@@ -787,16 +789,14 @@ function initInteraction(canvas) {
     mouse.leftButtonDown = event.button === 0;
   });
   canvas.addEventListener('mousemove', function(event) {
-    if(cameraFree){
-      const pos = toPos(event);
-      const delta = { x : mouse.pos.x - pos.x, y: mouse.pos.y - pos.y };
-      if (mouse.leftButtonDown) {
-        //add the relative movement of the mouse to the rotation variables
-    		camera.rotation.x -= delta.x / 1000;
-    		camera.rotation.y -= delta.y / 1000;
-      }
-      mouse.pos = pos;
+    const pos = toPos(event);
+    const delta = { x : mouse.pos.x - pos.x, y: mouse.pos.y - pos.y };
+    if (mouse.leftButtonDown) {
+      //add the relative movement of the mouse to the rotation variables
+  		camera.rotation.x -= delta.x / 1000;
+  		camera.rotation.y -= delta.y / 1000;
     }
+    mouse.pos = pos;
   });
   canvas.addEventListener('mouseup', function(event) {
     mouse.pos = toPos(event);
@@ -814,17 +814,18 @@ function initInteraction(canvas) {
   // forward/backward movement
   // TODO not sure if working correctly (passing through some axis)
   document.addEventListener('keydown', function(event) {
-    if(cameraFree){
-      if(event.code === 'ArrowUp') {
-        camera.position.x -= camera.direction.x * camera.speed;
-        camera.position.y -= camera.direction.y * camera.speed;
-        camera.position.z -= camera.direction.z * camera.speed;
+    if(event.code === 'ArrowUp') {
+      camera.position.x -= camera.direction.x * camera.speed;
+      camera.position.y -= camera.direction.y * camera.speed;
+      camera.position.z -= camera.direction.z * camera.speed;
 
-      } else if(event.code === 'ArrowDown') {
-        camera.position.x += camera.direction.x * camera.speed;
-        camera.position.y += camera.direction.y * camera.speed;
-        camera.position.z += camera.direction.z * camera.speed;
-      }
+      cameraFree = true;
+    } else if(event.code === 'ArrowDown') {
+      camera.position.x += camera.direction.x * camera.speed;
+      camera.position.y += camera.direction.y * camera.speed;
+      camera.position.z += camera.direction.z * camera.speed;
+
+      cameraFree = true;
     }
   })
 }
