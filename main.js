@@ -5,37 +5,54 @@ var gl = null,
 // camera control, set starting viewpoint here!
 const camera = {
   rotation: {
-    x: 89.6,
-    y: 19.95
+    x: 3.85,
+    y: 149.55
   },
   position: {
-    x: 200,
-    y: -200,
-    z: -300
+    x: -500,
+    y: -500,
+    z: -100
   },
   direction: {
     x: 0,
     y: 0,
     z: 0
   },
-  speed: 10  // TODO choose speed
+  speed: 30  // TODO choose speed
 };
 
-var cameraFree = false;
+//the last timestamp a frame was rendered (for time-based animation)
+var timePrev = 0;
+
+var sphereTranNode;
 
 // scenegraph
-var timePrev = 0;
 var root = null;
+var light2TranNode;
+var light2TranY = 0;
 var leiaRotNode;
 var billTranNode;
 
 // animation scenes
-var volleyballSceneTranNode;
-var volleyballTranNode;
-var volleyballDirection = 1.0;
-var volleyballSpeed = 0;
-var volleyballLocation = 0;
-var volleyballDistance = 100.0;
+//volleyball scene 1
+var volleyballSceneTranNode; //complete scene
+var volleyballTranNode; //ball translation
+var volleyballDirection = 1.0; //1 or -1, so the ball flies back and forth
+var volleyballSpeed = 0;  //for time-based animation
+var volleyballDistance = 100.0; //how far the ball should fly (distance between jawa)
+var volleyballLocation = 0; //current location in volleyballDistance
+
+//sandcrawler scene 2
+var sandcrawlerTranNode;
+var sandcrawlerPlatformTranNode;
+var sandcrawlerPlatformDegrees = 0; //how much the platform has rotated already
+
+//landspeeder scene 3
+var landspeederSceneTranNode;
+var lukeTranNode;
+var landspeederTranNode;
+var lukeDegrees = 0; //how much luke has rotated already
+var lukeMoved = 0; //how much luke moved to his landspeeder already
 
 /**
  * initializes OpenGL context, compile shader, and load buffers
@@ -59,6 +76,8 @@ function init(resources) {
  * builds up the scenegraph and returns the root node
  */
 function createSceneGraph(resources) {
+  // TODO maybe compact this whole stuff a little (make use of children constructor)
+
   let root = new ShaderSGNode(program);
   let enableTexNode = new SetUniformSGNode('u_enableObjectTexture', true);
 
@@ -67,7 +86,7 @@ function createSceneGraph(resources) {
   let sphereModelNode = new RenderSGNode(sphere);
   let sphereTexNode = new AdvancedTextureSGNode(resources.tex);
   let sphereMatNode = new MaterialSGNode();
-  let sphereTranNode = new TransformationSGNode(glm.transform({translate: [0, 0, 0]}));
+  sphereTranNode = new TransformationSGNode(glm.transform({translate: [500, -200, 0]}));
 
   let rect = makeRect(1.5, 1.3);
   let rectShaderNode = new ShaderSGNode(createProgram(gl, resources.whiteVs, resources.whiteFs));   // trying to use a different shader - how to combine shader results?
@@ -80,68 +99,99 @@ function createSceneGraph(resources) {
   let lightModelNode = new RenderSGNode(lightSphere);
   let lightTexNode = new AdvancedTextureSGNode(resources.sunTex);
   let lightMatNode = new MaterialSGNode();
-  let lightNode = new LightSGNode([0, 0, -15]);
+  let lightNode = new MyLightNode([300, -150, 300], 0, 30, [1,1,1]);
 
-  let light2Sphere = makeSphere(100, 20, 20);
-  let light2ModelNode = new RenderSGNode(lightSphere);
-  let light2Node = new LightSGNode([500, -500, 500]);
+  let light2Sphere = makeSphere(20, 20, 20);
+  let light2ModelNode = new RenderSGNode(light2Sphere);
+  let light2Node = new MyLightNode([1000, -500, 1000], 1, 180, [0,1,0]);
+  light2TranNode = new TransformationSGNode(glm.transform({translate: [500, -250, 0]}));
   // --------------------- camera test scene ------------------------
 
+  //scene 1...
   // billboard
-  let billboard = makeRect(20, 30);
-  let billShaderNode = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));   // trying to use a different shader - how to combine shader results?
+  let billboard = makeRect(10, 20);
+  //let billShaderNode = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));   // trying to use a different shader - how to combine shader results?
   let billModelNode = new RenderSGNode(billboard);
-  let billTexNode = new AdvancedTextureSGNode(resources.tex);
+  let billTexNode = new AdvancedTextureSGNode(resources.jawaTex);
   let billMatNode = new MaterialSGNode();
-  billTranNode = new TransformationSGNode(glm.transform({translate: [50, -50, -100]}));
+  billTranNode = new TransformationSGNode(glm.transform({translate: [450, -10, 330]}));
 
   // volleyball
   let volleyball = makeSphere(4, 0, 0);
-  let volleyballShaderNode = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));
+  //let volleyballShaderNode = new ShaderSGNode(createProgram(gl, resources.whiteVs, resources.whiteFs));
   let volleyballModelNode = new RenderSGNode(volleyball);
-  let volleyballTexNode = new AdvancedTextureSGNode(resources.sunTex);
+  let volleyballTexNode = new AdvancedTextureSGNode(resources.tex);
   let volleyballMatNode = new MaterialSGNode();
   volleyballTranNode = new TransformationSGNode(glm.transform({translate: [0, -15, 0]}));
 
-  // tusken 1
-  let tusken1 = resources.tusken;
-  let tuskenShaderNode1 = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));
-  let tuskenModelNode1 = new RenderSGNode(tusken1);
-  let tuskenTexNode1 = new AdvancedTextureSGNode(resources.leiaTex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
-  let tuskenMatNode1 = new MaterialSGNode();
-  let tuskenTranNode1 = new TransformationSGNode(glm.transform({rotateX: 180, rotateY: 90}));
+  // jawa 1
+  let jawa1 = resources.jawa;
+  //let jawaShaderNode1 = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));
+  let jawaModelNode1 = new RenderSGNode(jawa1);
+  let jawaTexNode1 = new AdvancedTextureSGNode(resources.tex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
+  let jawaMatNode1 = new MaterialSGNode();
+  let jawaTranNode1 = new TransformationSGNode(glm.transform({rotateX: 180, rotateY: -90, scale:0}));
 
-  // tusken 2
-  let tusken2 = resources.tusken;
-  let tuskenShaderNode2 = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));
-  let tuskenModelNode2 = new RenderSGNode(tusken2);
-  let tuskenTexNode2 = new AdvancedTextureSGNode(resources.leiaTex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
-  let tuskenMatNode2 = new MaterialSGNode();
-  let tuskenTranNode2 = new TransformationSGNode(glm.transform({translate: [volleyballDistance, 0, 0], rotateX: 180, rotateY: -90}));
+  // jawa 2
+  let jawa2 = resources.jawa;
+  //let jawaShaderNode2 = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));
+  let jawaModelNode2 = new RenderSGNode(jawa2);
+  let jawaTexNode2 = new AdvancedTextureSGNode(resources.tex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
+  let jawaMatNode2 = new MaterialSGNode();
+  let jawaTranNode2 = new TransformationSGNode(glm.transform({translate: [volleyballDistance, 0, 0], rotateX: 180, rotateY: 90}));
 
-  volleyballSceneTranNode = new TransformationSGNode(glm.transform({translate: [150, 0, 0], scale: 0.5}));
+  // volleyball scene transformation
+  volleyballSceneTranNode = new TransformationSGNode(glm.transform({translate: [300, 20, 330], scale: 0.5, rotateY: 45}));
+  //...scene 1
+
+  // scene 2 sandcrawler...
+  // TODO add spotlight to sandcrawler graph
+  // TODO must animate one part separately from rest of model....slide out and rotate platform from between body and crawlers (as some kind of stair...put opening with jawas onto lower body as texture)
+  // TODO find crawler texture
+  let sandcrawlerBody = makeSandcrawlerBody();
+  let sandcrawlerCrawlersNode = composeCrawlerQuad(resources);
+  let sandcrawlerPlatformModelNode = new RenderSGNode(makeRect(0.5, 0.25));
+  let sandcrawlerBodyModelNode = new RenderSGNode(sandcrawlerBody);
+  let sandcrawlerPlatformTexNode = new AdvancedTextureSGNode(resources.platformTex);
+  //let sandcrawlerPlatformTranNode = new TransformationSGNode(glm.transform({translate: [0.5, 0, 0.25], rotateX: -90}));
+  sandcrawlerPlatformTranNode = new TransformationSGNode(glm.transform({translate: [1.15, 0.2, 0.25], rotateX: -90, rotateY: -45, scale:0.7}));
+  let sandcrawlerBodyTexNode = new AdvancedTextureSGNode(resources.rustyMetalTex);
+  let sandcrawlerCrawlersTranNode = new TransformationSGNode(glm.transform({translate: [0.5, -0.05, 0]}));    // position crawlers below body
+  let sandcrawlerMatNode = new MaterialSGNode();
+  sandcrawlerTranNode = new TransformationSGNode(glm.transform({translate: [500, -50, 400], rotateX: 180, rotateY: 180, scale: 50}));
+  //...scene 2
+
+  //scene 3...
+  // luke
+  let luke = resources.luke;
+  let lukeModelNode = new RenderSGNode(luke);
+  let lukeTexNode = new AdvancedTextureSGNode(resources.tex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
+  let lukeMatNode = new MaterialSGNode();
+  lukeTranNode = new TransformationSGNode(glm.transform({translate: [40,0,0], rotateX: 180, scale: 30, rotateY: 180}));
+
+  // r2d2
+  let r2d2 = resources.r2d2;
+  let r2d2ModelNode = new RenderSGNode(r2d2);
+  let r2d2TexNode = new AdvancedTextureSGNode(resources.tex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
+  let r2d2MatNode = new MaterialSGNode();
+  let r2d2TranNode = new TransformationSGNode(glm.transform({translate: [15,0,0], rotateX: 180, rotateY: 90}));
 
   // leia
   let leia = resources.leia;
-  let leiaShaderNode = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));
   let leiaModelNode = new RenderSGNode(leia);
-  let leiaTexNode = new AdvancedTextureSGNode(resources.leiaTex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
+  let leiaTexNode = new AdvancedTextureSGNode(resources.tex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
   let leiaMatNode = new MaterialSGNode();
-  let leiaTranNode = new TransformationSGNode(glm.transform({translate: [100, -50, -100], rotateX: 180}));
-  leiaRotNode = new TransformationSGNode(glm.transform({rotateY: 180}));
+  let leiaTranNode = new TransformationSGNode(glm.transform({translate: [-25,0,-5], rotateX: 180, rotateY: -90}));
 
-  // sandcrawler
-  // TODO add spotlight to sandcrawler graph, to implement spotlights in a shader: www.tomdalling.com/blog/modern-opengl/08-even-more-lighting-directional-lights-spotlights-multiple-lights/
-  let sandcrawlerBody = makeSandcrawlerBody();
-  let sandcrawlerCrawlers = makeCrawlerQuad(1, 0.1, 0.5);
-  let sandcrawlerBodyModelNode = new RenderSGNode(sandcrawlerBody);
-  let sandcrawlerCrawlersModelNode = new RenderSGNode(sandcrawlerCrawlers);
-  let sandcrawlerBodyTexNode = new AdvancedTextureSGNode(resources.rustyMetalTex);
-  let sandcrawlerCrawlersTexNode = new AdvancedTextureSGNode(resources.crawlersTex);
-  let sandcrawlerCrawlersTranNode = new TransformationSGNode(glm.transform({translate: [0, -0.1, 0]}));
-  let sandcrawlerMatNode = new MaterialSGNode();
-  let sandcrawlerTranNode = new TransformationSGNode(glm.transform({translate: [500, -50, 500], rotateX: 180, scale: 200}));
+  // landspeeder
+  let landspeeder = resources.landspeeder;
+  let landspeederModelNode = new RenderSGNode(landspeeder);
+  let landspeederTexNode = new AdvancedTextureSGNode(resources.tex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
+  let landspeederMatNode = new MaterialSGNode();
+  landspeederTranNode = new TransformationSGNode(glm.transform({translate: [-25,0,200], rotateX: 180, scale: 15, rotateY: 180}));
 
+  landspeederSceneTranNode = new TransformationSGNode(glm.transform({translate: [400, 20, 430], scale: 0.5, rotateY: 0}));
+  //...scene 3
 
   // test terrain generation from heightmap
   let terrain = generateTerrain(resources.heightmap, 16, 16, 120);
@@ -161,26 +211,26 @@ function createSceneGraph(resources) {
   sandcrawlerTranNode.append(sandcrawlerMatNode);
   sandcrawlerMatNode.append(sandcrawlerBodyTexNode);
   sandcrawlerMatNode.append(sandcrawlerCrawlersTranNode);
+  sandcrawlerMatNode.append(sandcrawlerPlatformTranNode);
   sandcrawlerMatNode.append(enableTexNode);
-  sandcrawlerCrawlersTranNode.append(sandcrawlerCrawlersTexNode)
-  sandcrawlerCrawlersTexNode.append(sandcrawlerCrawlersModelNode);
+  sandcrawlerCrawlersTranNode.append(sandcrawlerCrawlersNode);
+  sandcrawlerPlatformTranNode.append(sandcrawlerPlatformTexNode);
+  sandcrawlerPlatformTexNode.append(sandcrawlerPlatformModelNode);
   sandcrawlerBodyTexNode.append(sandcrawlerBodyModelNode);
   root.append(sandcrawlerTranNode);
 
   // show leia
-  leiaRotNode.append(leiaMatNode);
+  leiaTranNode.append(leiaMatNode);
   leiaMatNode.append(leiaTexNode);
   leiaTexNode.append(enableTexNode);
   leiaTexNode.append(leiaModelNode);
-  leiaShaderNode.append(leiaTexNode);
-  leiaTranNode.append(leiaRotNode);
   root.append(leiaTranNode);
 
   // show billboard
   billMatNode.append(billTexNode);
   billTexNode.append(enableTexNode);
   billTexNode.append(billModelNode);
-  billShaderNode.append(billTexNode);
+  //billShaderNode.append(billTexNode);
   billTranNode.append(billMatNode);
   root.append(billTranNode);
 
@@ -189,26 +239,59 @@ function createSceneGraph(resources) {
   volleyballMatNode.append(volleyballTexNode);
   volleyballTexNode.append(enableTexNode);
   volleyballTexNode.append(volleyballModelNode);
-  volleyballShaderNode.append(volleyballTexNode);
+  //volleyballShaderNode.append(volleyballTexNode);
 
-  // show tusken1
-  tuskenTranNode1.append(tuskenMatNode1);
-  tuskenMatNode1.append(tuskenTexNode1);
-  tuskenTexNode1.append(enableTexNode);
-  tuskenTexNode1.append(tuskenModelNode1);
-  tuskenShaderNode1.append(tuskenTexNode1);
+  // show jawa1
+  jawaTranNode1.append(jawaMatNode1);
+  jawaMatNode1.append(jawaTexNode1);
+  jawaTexNode1.append(enableTexNode);
+  jawaTexNode1.append(jawaModelNode1);
+  //jawaShaderNode1.append(jawaTexNode1);
 
-  // show tusken2
-  tuskenTranNode2.append(tuskenMatNode2);
-  tuskenMatNode2.append(tuskenTexNode2);
-  tuskenTexNode2.append(enableTexNode);
-  tuskenTexNode2.append(tuskenModelNode2);
-  tuskenShaderNode2.append(tuskenTexNode2);
+  // show jawa2
+  jawaTranNode2.append(jawaMatNode2);
+  jawaMatNode2.append(jawaTexNode2);
+  jawaTexNode2.append(enableTexNode);
+  jawaTexNode2.append(jawaModelNode2);
+  //jawaShaderNode2.append(jawaTexNode2);
 
+  // perform transformation on whole scene 1
   volleyballSceneTranNode.append(volleyballTranNode);
-  volleyballSceneTranNode.append(tuskenTranNode1);
-  volleyballSceneTranNode.append(tuskenTranNode2);
+  volleyballSceneTranNode.append(jawaTranNode1);
+  volleyballSceneTranNode.append(jawaTranNode2);
   root.append(volleyballSceneTranNode);
+
+  // show luke
+  lukeTranNode.append(lukeMatNode);
+  lukeMatNode.append(lukeTexNode);
+  lukeTexNode.append(enableTexNode);
+  lukeTexNode.append(lukeModelNode);
+
+  // show r2d2
+  r2d2TranNode.append(r2d2MatNode);
+  r2d2MatNode.append(r2d2TexNode);
+  r2d2TexNode.append(enableTexNode);
+  r2d2TexNode.append(r2d2ModelNode);
+
+  // show leia
+  leiaTranNode.append(leiaMatNode);
+  leiaMatNode.append(leiaTexNode);
+  leiaTexNode.append(enableTexNode);
+  leiaTexNode.append(leiaModelNode);
+
+  // show landspeeder
+  landspeederTranNode.append(landspeederMatNode);
+  landspeederMatNode.append(landspeederTexNode);
+  landspeederTexNode.append(enableTexNode);
+  landspeederTexNode.append(landspeederModelNode);
+
+  // perform transformation on whole scene 3
+  landspeederSceneTranNode.append(lukeTranNode);
+  landspeederSceneTranNode.append(r2d2TranNode);
+  landspeederSceneTranNode.append(leiaTranNode);
+  landspeederSceneTranNode.append(landspeederTranNode);
+  root.append(landspeederSceneTranNode);
+
 
   sphereTranNode.append(sphereMatNode);
   sphereMatNode.append(sphereTexNode);
@@ -223,14 +306,16 @@ function createSceneGraph(resources) {
   rectTexNode.append(enableTexNode);
   root.append(rectShaderNode);
 
-  lightNode.append(lightMatNode);   // TODO applying a texture to lightnode changes it's position...why? - try without lightTex/enableTex nodes
+  lightNode.append(lightMatNode);
   lightMatNode.append(lightTexNode);
   lightTexNode.append(enableTexNode);
   lightTexNode.append(sphereModelNode);
   root.append(lightNode);
 
-  light2Node.append(light2ModelNode);   // TODO how to skin a light node? even second light source to illuminate first does not make texture on first visible
-  root.append(light2Node);
+  light2Node.append(light2ModelNode);
+  light2TranNode.append(light2Node);
+  //root.append(light2TranNode);
+  root.append(light2TranNode);
 
   return root;
 }
@@ -241,7 +326,7 @@ function createSceneGraph(resources) {
 function makeSandcrawlerBody() {
   // TODO texture coodinates and... actually find a texture to use!
   // TODO spotlights..?
-  // TODO put crawlers as own scenegraph node(...composed model) and use an extern model for that
+  // TODO weird flickering...z-buffer fighting?
 
   // returns
   var vertices = [];
@@ -272,7 +357,31 @@ function makeSandcrawlerBody() {
     0,.75,0, //13
     0,0,.5, //14
     0,.75,.5 //15
-  );
+  )
+
+  // back body texture coordinates
+  texture.push(
+    0,0,  0,1,  1,0,  1,1,
+    0,0,  0,1,  1,0,  1,1,
+    0,0,  0,1,  1,0,  1,1,
+    0,0,  0,1,  1,0,  1,1
+  )
+
+  // now triangles
+  index.push(
+    // side face
+    0,1,3,
+    0,2,3,
+    // top face
+    4,6,7,
+    7,5,4,
+    // other side face
+    8,9,10,
+    10,11,9,
+    // backface
+    12,13,15,
+    15,14,12
+  )
 
   // front part of body ... trapezes
   vertices.push(
@@ -303,21 +412,14 @@ function makeSandcrawlerBody() {
     1.6,.5,.4 //35
   )
 
-  // now triangles
-  index.push(
-    // side face
-    0,1,3,
-    0,2,3,
-    // top face
-    4,6,7,
-    7,5,4,
-    // other side face
-    8,9,10,
-    10,11,9,
-    // backface
-    12,13,15,
-    15,14,12
-  );
+  // front body texture coordinates
+  texture.push(
+    0,0,  0,1,  1,0,  1,1,
+    0,0,  0,1,  1,0,  1,1,
+    0,0,  0,1,  1,0,  1,1,
+    0,0,  0,1,  1,0,  1,1,
+    0,0,  0,1,  1,0,  1,1
+  )
 
   // now triangles again
   index.push(
@@ -339,60 +441,54 @@ function makeSandcrawlerBody() {
   )
 
   // now build vertex - triangle datastructure to automatically compute normals
+  // TODO put triangle vertex indices in correct order for normal computation
   var vertexTriangles = [];
-  // back part
-  vertexTriangles.push([0,1,3,  0,2,3]);
-  vertexTriangles.push([0,1,3]);
-  vertexTriangles.push([0,2,3]);
-  vertexTriangles.push([0,1,3,  0,2,3]);
+  vertexTriangles.push([0,1,3,  0,3,2]);
+  vertexTriangles.push([1,0,3]);
+  vertexTriangles.push([2,0,3]);
+  vertexTriangles.push([3,0,1,  3,0,2]);
 
-  vertexTriangles.push([4,6,7,  7,5,4]);
-  vertexTriangles.push([7,5,4]);
-  vertexTriangles.push([4,6,7]);
-  vertexTriangles.push([4,6,7,  7,5,4]);
+  vertexTriangles.push([4,6,7,  4,7,5]);
+  vertexTriangles.push([5,7,4]);
+  vertexTriangles.push([6,4,7]);
+  vertexTriangles.push([7,4,6,  7,5,4]);
 
   vertexTriangles.push([8,9,10]);
-  vertexTriangles.push([8,9,10,  10,11,9]);
-  vertexTriangles.push([8,9,10,  10,11,9]);
-  vertexTriangles.push([10,11,9]);
+  vertexTriangles.push([9,8,10,  9,10,11]);
+  vertexTriangles.push([10,8,9,  10,11,9]);
+  vertexTriangles.push([11,10,9]);
 
-  vertexTriangles.push([12,13,15,  15,14,12]);
-  vertexTriangles.push([12,13,15]);
-  vertexTriangles.push([15,14,12]);
-  vertexTriangles.push([12,13,15,  15,14,12]);
+  vertexTriangles.push([12,13,15,  12,15,14]);
+  vertexTriangles.push([13,12,15]);
+  vertexTriangles.push([14,15,12]);
+  vertexTriangles.push([15,12,13,  15,14,12]);
 
-  vertexTriangles.push([16,17,19,  19,18,16]);
-  vertexTriangles.push([16,17,19]);
-  vertexTriangles.push([19,18,16]);
-  vertexTriangles.push([16,17,19,  19,18,16]);
+  vertexTriangles.push([16,17,19,  16,19,18]);
+  vertexTriangles.push([17,16,19]);
+  vertexTriangles.push([18,19,16]);
+  vertexTriangles.push([19,16,17,  19,18,16]);
 
-  vertexTriangles.push([20,21,23,  23,22,20]);
-  vertexTriangles.push([20,21,23]);
-  vertexTriangles.push([23,22,20]);
-  vertexTriangles.push([20,21,23,  23,22,20]);
+  vertexTriangles.push([20,21,23,  20,23,22]);
+  vertexTriangles.push([21,20,23]);
+  vertexTriangles.push([22,23,20]);
+  vertexTriangles.push([23,20,21,  23,22,20]);
 
-  vertexTriangles.push([24,25,27,  27,26,24]);
-  vertexTriangles.push([24,25,27]);
-  vertexTriangles.push([27,26,24]);
-  vertexTriangles.push([24,25,27,  27,26,24]);
+  vertexTriangles.push([24,25,27,  24,27,26]);
+  vertexTriangles.push([25,24,27]);
+  vertexTriangles.push([26,27,24]);
+  vertexTriangles.push([27,24,25,  27,26,24]);
 
-  vertexTriangles.push([28,29,31, 31,30,28]);
-  vertexTriangles.push([28,29,31]);
-  vertexTriangles.push([31,30,28]);
-  vertexTriangles.push([28,29,31,  31,30,28]);
+  vertexTriangles.push([28,29,31, 28,31,30]);
+  vertexTriangles.push([29,28,31]);
+  vertexTriangles.push([30,31,28]);
+  vertexTriangles.push([31,28,29,  31,30,28]);
 
-  vertexTriangles.push([32,33,35,  35,34,32]);
-  vertexTriangles.push([32,33,35]);
-  vertexTriangles.push([35,34,32]);
-  vertexTriangles.push([32,33,35,  35,34,32]);
+  vertexTriangles.push([32,33,35,  32,35,34]);
+  vertexTriangles.push([33,32,35]);
+  vertexTriangles.push([34,35,32]);
+  vertexTriangles.push([35,32,33,  35,34,32]);
 
   calculateNormals(vertexTriangles, vertices, normal, false);
-
-
-  // TODO right now just putting some random texture coords
-  for(var i = 0; i < index.length / 3; i++) {
-    texture.push(0,0, 1,0, 0,1);
-  }
 
   return {
     position: vertices,
@@ -404,65 +500,28 @@ function makeSandcrawlerBody() {
 
 
 /**
-  * Returns the model of a quad with given dimensions and texture coordinates for crawler texture
-  * @param w: width
-  * @param h: height
-  * @param d: depth
+  * Returns the top scenegraph node of a quad with size fitting the sandcrawler
   */
-function makeCrawlerQuad(w, h, d) {
+function composeCrawlerQuad(resources) {
+  // we need 5 rects
+  var left = makeRect(0.25, 0.05);
+  var bottom = makeRect(0.5, 0.25);
+  var right = makeRect(0.25, 0.05);
+  var front = makeRect(0.5, 0.05);
+  var back = makeRect(0.5, 0.05);
 
-  // returns
-  var vertices = [];
-  var normal = [];
-  var texture = [];
-  var index = [];
+  var root = new SGNode(
+    new SetUniformSGNode('u_enableObjectTexture', true, [
+      new TransformationSGNode(glm.transform({rotateX: 180}), new AdvancedTextureSGNode(resources.crawlerTex0, new RenderSGNode(front))),
+      new TransformationSGNode(glm.transform({rotateX: 180, translate: [0,0,0.5]}), new AdvancedTextureSGNode(resources.crawlerTex0, new RenderSGNode(back))),
+      new TransformationSGNode(glm.transform({rotateY: 90, translate: [-0.5, 0, 0.25]}), new AdvancedTextureSGNode(resources.crawlerTex1, new RenderSGNode(left))),
+      new TransformationSGNode(glm.transform({rotateY: 90, translate: [0.5, 0, 0.25]}), new AdvancedTextureSGNode(resources.crawlerTex1, new RenderSGNode(right))),
+      new TransformationSGNode(glm.transform({rotateX: -90, translate: [0, -0.05, 0.25]}), new AdvancedTextureSGNode(resources.crawlerTex1, new RenderSGNode(bottom)))
+  ]));
 
-  vertices.push(
-    0,0,0,
-    w,0,0,
-    0,h,0,
-    w,h,0,
-    0,0,d,
-    w,0,d,
-    0,h,d,
-    w,h,d
-  )
-
-  index.push(
-    0,2,3,  3,1,0,
-    0,2,6,  6,4,0,
-    1,3,7,  7,5,1,
-    0,4,5,  5,1,0,
-    4,6,7,  7,5,4
-  )
-
-  texture.push(
-    0,0, 0,.5, 1,.5,  0,0, 1,0, 1,.5,   // crawlers side view
-    0,.5, 0,1, 1,1,  0,.5, 1,.5, 1,1,
-    0,.5, 0,1, 1,1,  0,.5, 1,.5, 1,1,
-    0,.5, 0,1, 1,1,  0,.5, 1,.5, 1,1,
-    0,0, 0,.5, 1,.5,  0,0, 1,0, 1,.5    // crawlers side view
-  )
-
-  var vertexTriangles = [];
-  vertexTriangles.push([0,2,3,  3,1,0,  0,2,6,  6,4,0, 0,4,5,  5,1,0]);
-  vertexTriangles.push([3,1,0,  1,3,7,  7,5,1,  5,1,0]);
-  vertexTriangles.push([0,2,3,  0,2,6]);
-  vertexTriangles.push([0,2,3,  3,1,0,  1,3,7]);
-  vertexTriangles.push([6,4,0,  0,4,5,  4,6,7,  7,5,4]);
-  vertexTriangles.push([7,5,1,  0,4,5,  5,1,0,  7,5,4]);
-  vertexTriangles.push([7,5,1,  0,4,5,  5,1,0,  7,5,4]);
-  vertexTriangles.push([1,3,7,  7,5,1,  4,6,7,  7,5,4]);
-
-  calculateNormals(vertexTriangles, vertices, normal, false);
-
-  return {
-    position: vertices,
-    normal: normal,
-    texture: texture,
-    index: index
-  };
+  return root;
 }
+
 
 /**
  * generates a planar terrain model generated from a given heightmap
@@ -497,9 +556,12 @@ function generateTerrain(heightmap, stepX, stepY, heightScaling) {
   // returns
   var vertices = [];
   var normal = [];
-  var texture = [];  // TODO set texture coordinates properly?
+  var texture = [];
   var index = [];
 
+  // current texture coordinates to set
+  var currentTC0 = 1;
+  var currentTC1 = 0;
 
   // iterate through image data, skipping according to resolution
   var meshWidth = heightmap.width / stepX + 1;
@@ -525,6 +587,34 @@ function generateTerrain(heightmap, stepX, stepY, heightScaling) {
       // save vertex
       vertices.push(x, -z, y);   // height of image is height (y) of terrain
 
+      // texture coordinates:
+      //
+      //  01___11___01___11_  ...
+      //   |  /|   /|   /|
+      //   | / |  / |  / |
+      //  00___10___00___10_
+      //   |  /|   /|   /|
+      //   | / |  / |  / |
+      //  01___11___01___11_
+      //   |   |    |    |
+      //  ...
+      //
+      texture.push(currentTC0, currentTC1);
+      if(currentTC0 == 0 && currentTC1 == 0) {
+        currentTC0 = 1;
+        currentTC1 = 0;
+      } else if(currentTC0 == 0 && currentTC1 == 1) {
+        currentTC0 = 1;
+        currentTC1 = 1;
+      } else if(currentTC0 == 1 && currentTC1 == 0) {
+        currentTC0 = 0;
+        currentTC1 = 0;
+      } else if(currentTC0 == 1 && currentTC1 == 1) {
+        currentTC0 = 0;
+        currentTC1 = 1;
+      }
+
+
       // now the harder part: building triangles:
       // from every vertex start 2 triangles: type A = {i, i+1, i+meshWidth} and type B = {i, i+width, i+meshWidth-1}   (meshWidth == vertices in a line)
       // but: no type B triangle from first vertex in line, not type A triangle from last vertex in line, no triangles from vertices in last line
@@ -537,9 +627,9 @@ function generateTerrain(heightmap, stepX, stepY, heightScaling) {
           // push type B
           index.push(vertexIndex, vertexIndex + meshWidth, vertexIndex + meshWidth - 1);
           // add texture coordinates
-          texture.push( 0, 0,
+          /*texture.push( 0, 0,
                         1, 0,
-                        1, 1);
+                        1, 1);*/
           // keep track of all triangles adjacent to a vertex to compute normals later
           if(!vertexTriangles[vertexIndex]) {
             vertexTriangles[vertexIndex] = [];
@@ -548,11 +638,11 @@ function generateTerrain(heightmap, stepX, stepY, heightScaling) {
           if(!vertexTriangles[vertexIndex+meshWidth]) {
             vertexTriangles[vertexIndex+meshWidth] = [];
           }
-          vertexTriangles[vertexIndex+meshWidth].push(vertexIndex, vertexIndex + meshWidth, vertexIndex + meshWidth - 1);
+          vertexTriangles[vertexIndex+meshWidth].push(vertexIndex + meshWidth, vertexIndex + meshWidth - 1, vertexIndex);
           if(!vertexTriangles[vertexIndex+meshWidth-1]) {
             vertexTriangles[vertexIndex+meshWidth-1] = [];
           }
-          vertexTriangles[vertexIndex+meshWidth-1].push(vertexIndex, vertexIndex + meshWidth, vertexIndex + meshWidth - 1);
+          vertexTriangles[vertexIndex+meshWidth-1].push(vertexIndex + meshWidth - 1, vertexIndex, vertexIndex + meshWidth);
         }
 
         if(x < heightmap.width - 1) {
@@ -560,22 +650,32 @@ function generateTerrain(heightmap, stepX, stepY, heightScaling) {
           // push type A
           index.push(vertexIndex, vertexIndex + 1, vertexIndex + meshWidth);
           // add texture coordinates
-          texture.push( 0, 0,
+          /*texture.push( 0, 0,
                         0, 1,
-                        1, 1);
+                        1, 1);*/
           // keep track of all triangles adjacent to a vertex to compute normals later
           if(!vertexTriangles[vertexIndex]) {
             vertexTriangles[vertexIndex] = [];
           }
-          vertexTriangles[vertexIndex].push(vertexIndex, vertexIndex + meshWidth, vertexIndex + meshWidth - 1);
+          vertexTriangles[vertexIndex].push(vertexIndex, vertexIndex + 1, vertexIndex + meshWidth);
+          if(!vertexTriangles[vertexIndex+1]) {
+            vertexTriangles[vertexIndex+1] = [];
+          }
+          vertexTriangles[vertexIndex+1].push(vertexIndex + 1, vertexIndex + meshWidth, vertexIndex);
           if(!vertexTriangles[vertexIndex+meshWidth]) {
             vertexTriangles[vertexIndex+meshWidth] = [];
           }
-          vertexTriangles[vertexIndex+meshWidth].push(vertexIndex, vertexIndex + meshWidth, vertexIndex + meshWidth - 1);
-          if(!vertexTriangles[vertexIndex+meshWidth-1]) {
-            vertexTriangles[vertexIndex+meshWidth-1] = [];
-          }
-          vertexTriangles[vertexIndex+meshWidth-1].push(vertexIndex, vertexIndex + meshWidth, vertexIndex + meshWidth - 1);
+          vertexTriangles[vertexIndex+meshWidth].push(vertexIndex + meshWidth, vertexIndex, vertexIndex + 1);
+
+        } else {
+            // last vertex in line - set new texture coordinates for next line!
+            if(currentTC0 == 1 && currentTC1 == 1 || currentTC0 == 0 && currentTC1 == 1) {
+              currentTC0 = 0;
+              currentTC1 = 0;
+            } else if(currentTC0 == 0 && currentTC1 == 0 || currentTC0 == 1 && currentTC1 == 0) {
+              currentTC0 = 0;
+              currentTC1 = 1;
+            }
         }
       }
 
@@ -590,7 +690,7 @@ function generateTerrain(heightmap, stepX, stepY, heightScaling) {
   }
 
   // calculate terrain normals
-  calculateNormals(vertexTriangles, vertices, normal, true);
+  calculateNormals(vertexTriangles, vertices, normal, false);
 
   return {
     position: vertices,
@@ -603,13 +703,13 @@ function generateTerrain(heightmap, stepX, stepY, heightScaling) {
 /**
  * calculates the normal vector of every vertex by weighting in the surface normals of all adjacent triangles!
  * @param: vertexTriangles: two-dimensional array that contains triangles in form of vertex indices in the vertices parameter such that: vertexTriangles[123] == triangles adjacent to vertices[123]
+                            IMPORTANT: the 3 vertex indices representing each adjacent triangle are expected to always have the current vertex as first vertex and the other two in clockwise ordering around the current vertex
+                            an absolute ordering like this is necessary for proper normal calculation as: a cross b != b cross a
  * @param: vertices: array of vertices where 3 sequential numbers constitute a vertex
  * @param: normal: the array where normals should be pushed into
- * @param: forcePointUpwards: if true, normals with a negative y component are inverted
+ * @param: convenience flag, results in flipped normals
  */
-function calculateNormals(vertexTriangles, vertices, normal, forcePointUpwards) {
-  // TODO some outer vertices still have flipped normals but I don't know how to detect them (or no normals at all?)
-  // TODO remove dirty fix for terrain (wouldn't work for non planar models - vertexTriangles datastructure must have triangles ordered in a constant way (clockwise/counterclockwise))
+function calculateNormals(vertexTriangles, vertices, normal, flip) {
   vertexTriangles.forEach(function(adjacentTriangles) {
     var sum = vec3.create();
 
@@ -619,10 +719,15 @@ function calculateNormals(vertexTriangles, vertices, normal, forcePointUpwards) 
       var p2 = vec3.fromValues(vertices[3*adjacentTriangles[i+2]], vertices[3*adjacentTriangles[i+2]+1], vertices[3*adjacentTriangles[i+2]+2]);
 
       // calculate surface normal of triangle as cross product of two lines of the triangle
-      var surfaceNormal = vec3.cross(vec3.create(), vec3.subtract(vec3.create(), p0, p1), vec3.subtract(vec3.create(), p0, p2));
-      // TODO dirty fix: if surface normal has negative y component, it's pointing the wrong direction
-      if(forcePointUpwards && surfaceNormal[1] > 0) {
-        vec3.inverse(surfaceNormal, surfaceNormal);
+      var p0_p1 = vec3.subtract(vec3.create(), p0, p1);
+      var p0_p2 = vec3.subtract(vec3.create(), p0, p2);
+      var surfaceNormal;
+
+      // if for some reason all your hand-entered triangles result in flipped normals... ;)
+      if(flip) {
+        surfaceNormal = vec3.cross(vec3.create(), p0_p2, p0_p1);
+      } else {
+        surfaceNormal = vec3.cross(vec3.create(), p0_p1, p0_p2);
       }
 
       // sum up all surface normals
@@ -643,16 +748,14 @@ function calculateNormals(vertexTriangles, vertices, normal, forcePointUpwards) 
  * render one frame
  */
 function render(timeInMilliseconds) {
-  //calculate delta time for animation
-  //convert timeInMilliseconds in seconds
-  var timeNow = timeInMilliseconds / 1000;
+  //calculate delta time for time-based animation
+  var timeNow = timeInMilliseconds / 1000; //convert timeInMilliseconds to seconds
   var timeDelta = timeNow - timePrev;
   timePrev = timeNow;
 
   renderVolleyballScene(timeDelta);
-
-  console.log("cameraFree: " + cameraFree);
-
+  renderSandcrawlerScene(timeDelta);
+  renderLandspeederScene(timeDelta);
 
 
   gl.clearColor(0.9, 0.9, 0.9, 1.0);
@@ -682,7 +785,15 @@ function render(timeInMilliseconds) {
 
   //console.log("rotationx: " + camera.rotation.x.toFixed(2) + "  |  rotationy: " + camera.rotation.y.toFixed(2) + "  |  x:" + camera.position.x.toFixed(2) + " y:" + camera.position.y.toFixed(2) + " z:" + camera.position.z.toFixed(2) + "  |  dirx:" + camera.direction.x.toFixed(2) + " diry:" + camera.direction.y.toFixed(2) + " dirz:" + camera.direction.z.toFixed(2));
 
+  //light2TranY += 0.5;
+  //light2TranNode.matrix = glm.transform({translate: [0, light2TranY, 0], rotateY: light2TranY/10});
+  //light2TranNode.matrix = glm.translate();
+
+
+
+
   renderBillboard(context);
+  renderMovingLightSource(timeDelta);
 
   //render scenegraph
   root.render(context);
@@ -691,33 +802,82 @@ function render(timeInMilliseconds) {
   requestAnimationFrame(render);
 }
 
+function renderMovingLightSource(timeDelta){
+  var translate1 = mat4.create();
+  translate1 = glm.translate(0, 0, 500);
+  var rotate = mat4.create();
+  rotate = glm.rotateY(30*timeDelta);
+  var translate2 = mat4.create();
+  translate2 = glm.translate(0, 0, -500);
+  var matrix1 = mat4.multiply(mat4.create(), translate1, rotate);
+  var matrix2 = mat4.multiply(mat4.create(), matrix1, translate2);
+  light2TranNode.matrix = mat4.multiply(mat4.create(), light2TranNode.matrix, matrix2);
+}
+
+//checks if camera is close enough to an animation scene to start animation
 function cameraIsInRadius(point){
   var distance = Math.sqrt(Math.pow(point[0] - camera.position.x, 2) + Math.pow(point[1] - camera.position.y, 2) + Math.pow(point[2] - camera.position.z, 2))
-  if(distance <= 250){
+  if(distance <= 300){
     return true;
   }
   return false;
 }
 
 function renderVolleyballScene(timeDelta){
+  //animate only when camera is close enough to whole scene
   if(cameraIsInRadius([volleyballSceneTranNode.matrix[12] + (volleyballDistance / 2), volleyballSceneTranNode.matrix[13], volleyballSceneTranNode.matrix[14]])){
-    //translate volleyball between two tusken
+    //volleyballDirection determines the direction the ball flies (back and forth)
     if(volleyballLocation <= 0){
       volleyballDirection = 1.0;
     } else if(volleyballLocation >= volleyballDistance){
       volleyballDirection = -1.0;
     }
+    //speed depends on current frame rate
     volleyballSpeed = 60.0 * timeDelta * volleyballDirection;
 
+    //the height (y-axis) of the ball depends on a sin() calculation (between 0 and Pi, while Pi corresponds to volleyballDistance)
     var y = -Math.sin(Math.PI/volleyballDistance * volleyballLocation) * volleyballDistance;
-    volleyballTranNode.matrix = glm.translate(volleyballLocation, y - 15, 0);
+    //translate the ball
+    volleyballTranNode.matrix = glm.translate(volleyballLocation, y - 20, 0);
     volleyballLocation += volleyballSpeed;
   }
 }
 
+function renderSandcrawlerScene(timeDelta){
+  if(sandcrawlerPlatformDegrees < 70){
+    if(cameraIsInRadius([sandcrawlerTranNode.matrix[12], sandcrawlerTranNode.matrix[13], sandcrawlerTranNode.matrix[14]])){
+      var degreesDelta = 10*timeDelta;
+      sandcrawlerPlatformDegrees += degreesDelta;
+      sandcrawlerPlatformTranNode.matrix = mat4.multiply(mat4.create(), sandcrawlerPlatformTranNode.matrix, glm.translate(0, 0, -timeDelta*0.045));
+      sandcrawlerPlatformTranNode.matrix = mat4.multiply(mat4.create(), sandcrawlerPlatformTranNode.matrix, glm.rotateY(degreesDelta));
+    }
+  }
+}
+
+function renderLandspeederScene(timeDelta){
+  if(cameraIsInRadius([landspeederSceneTranNode.matrix[12], landspeederSceneTranNode.matrix[13], landspeederSceneTranNode.matrix[14]])){
+    if(lukeDegrees < 90){
+      var degreesDelta = 30*timeDelta;
+      lukeDegrees += degreesDelta;
+      lukeTranNode.matrix = mat4.multiply(mat4.create(), lukeTranNode.matrix, glm.rotateY(-degreesDelta));
+    }
+    else if(lukeMoved < 7){
+      var moveDelta = 4*timeDelta;
+      lukeMoved += moveDelta;
+      lukeTranNode.matrix = mat4.multiply(mat4.create(), lukeTranNode.matrix, glm.translate(moveDelta, 0, 0));
+      if(lukeMoved >= 7){
+        lukeTranNode.matrix = mat4.create();
+      }
+    } else{
+      var moveDelta = 10*timeDelta;
+      landspeederTranNode.matrix = mat4.multiply(mat4.create(), landspeederTranNode.matrix, glm.translate(0, 0, moveDelta));
+    }
+  }
+}
+
 function renderBillboard(context){
-  //billboard
-  //https://swiftcoder.wordpress.com/2008/11/25/constructing-a-billboard-matrix/
+  //render billboard
+  //identity matrix
   var billTransformation =
   [
   1, 0, 0, 0,
@@ -725,6 +885,15 @@ function renderBillboard(context){
   0, 0, 1, 0,
   0, 0, 0, 1
   ];
+
+  /*the billboard faces the camera orthogonally at all time,
+  so the billboard has the inverse rotation to the view matrix
+  this means we have to inverse the view matrix to get the rotation matrix for the billboard
+  Since a rotation matrix is an orthogonal matrix,
+  we can just transpose the rotation part of the viewMatrix, to get its inverse
+  and then just add the translate part of the billboard to the inverse matrix
+  */
+  //rotation part
   billTransformation[0] = context.viewMatrix[0];
   billTransformation[1] = context.viewMatrix[4];
   billTransformation[2] = context.viewMatrix[8];
@@ -734,6 +903,7 @@ function renderBillboard(context){
   billTransformation[8] = context.viewMatrix[2];
   billTransformation[9] = context.viewMatrix[6];
   billTransformation[10] = context.viewMatrix[10];
+  //translation part
   billTransformation[12] = billTranNode.matrix[12];
   billTransformation[13] = billTranNode.matrix[13];
   billTransformation[14] = billTranNode.matrix[14];
@@ -752,16 +922,26 @@ loadResources({
 
   // terrain
   heightmap: 'assets/terrain/heightmap.png',
+  sandTex: 'assets/sand.jpg',
+
+  // other textures
   tex: 'assets/lava.jpg',
   sunTex: 'assets/sun.jpg',
-  sandTex: 'assets/sand.jpg',
+  leiaTex: 'assets/models/leia/Leia/Leia Textures/Leia_Diff.png',
+  rustyMetalTex: 'assets/rusty_metal.jpg',
+  crawlerTex0: 'assets/crawlers0.jpg',
+  crawlerTex1: 'assets/crawlers1.jpg',
+  platformTex: 'assets/platform.jpg',
+  tuskenTex: 'assets/tusken.jpg',
+  jawaTex: 'assets/jawa.jpg',
 
   // models
   leia: 'assets/models/leia/Leia/Leia.obj',
-  tusken: 'assets/models/leia/Leia/Leia.obj',
-  leiaTex: 'assets/models/leia/Leia/Leia Textures/Leia_Diff.png',
-  rustyMetalTex: 'assets/rusty_metal.jpg',
-  crawlersTex: 'assets/crawlers.jpg'
+  jawa: 'assets/models/R2D2/R2D2.obj',
+  luke: 'assets/models/Luke/Luke yavin.obj',
+  r2d2: 'assets/models/R2D2/R2D2.obj',
+  landspeeder: 'assets/models/Landspeeder/Landspeeder.obj'
+
 
 }).then(function (resources /*an object containing our keys with the loaded resources*/) {
   init(resources);
@@ -794,7 +974,7 @@ function initInteraction(canvas) {
     if (mouse.leftButtonDown) {
       //add the relative movement of the mouse to the rotation variables
   		camera.rotation.x -= delta.x / 1000;
-  		camera.rotation.y -= delta.y / 1000;
+  		camera.rotation.y += delta.y / 1000;
     }
     mouse.pos = pos;
   });
@@ -819,13 +999,88 @@ function initInteraction(canvas) {
       camera.position.y -= camera.direction.y * camera.speed;
       camera.position.z -= camera.direction.z * camera.speed;
 
-      cameraFree = true;
     } else if(event.code === 'ArrowDown') {
       camera.position.x += camera.direction.x * camera.speed;
       camera.position.y += camera.direction.y * camera.speed;
       camera.position.z += camera.direction.z * camera.speed;
-
-      cameraFree = true;
     }
   })
+}
+
+/**
+  * extended light node implementation - supports multiple lightsources and spotlights - only use this from now on
+  * every light is a spotlight - use >= 180 angle for directional light
+  * @param index: every lightnode must have an index that is unique over all lightnodes - also must be < MAX_LIGHTS in shaders
+  * @param coneAngle: the cone of the spotlight has an angle of +- coneAngle from coneDirection
+  * @param coneDirection: center of the spotlight cone, doesn't have to be normalized
+  */
+class MyLightNode extends TransformationSGNode {
+
+  constructor(position, index, coneAngle, coneDirection, children) {
+    super(children);
+    this.position = position || [0, 0, 0];
+    this.ambient = [0, 0, 0, 1];
+    this.diffuse = [1, 1, 1, 1];
+    this.specular = [1, 1, 1, 1];
+
+    this.index = index;
+    this.uniform = 'u_light';
+
+    this.coneAngle = coneAngle;
+    this.coneDirection = coneDirection;
+
+    this._worldPosition = null;
+  }
+
+  setLightUniforms(context) {
+    const gl = context.gl;
+    //no materials in use
+    if (!context.shader || !isValidUniformLocation(gl.getUniformLocation(context.shader, this.uniform + '[' + this.index + ']' + '.ambient'))) {
+      return;
+    }
+    gl.uniform4fv(gl.getUniformLocation(context.shader, this.uniform + '[' + this.index + ']' + '.ambient'), this.ambient);
+    gl.uniform4fv(gl.getUniformLocation(context.shader, this.uniform + '[' + this.index + ']' + '.diffuse'), this.diffuse);
+    gl.uniform4fv(gl.getUniformLocation(context.shader, this.uniform + '[' + this.index + ']' + '.specular'), this.specular);
+
+    gl.uniform1f(gl.getUniformLocation(context.shader, this.uniform + '[' + this.index + ']' + '.coneAngle'), this.coneAngle);
+    gl.uniform3fv(gl.getUniformLocation(context.shader, this.uniform + '[' + this.index + ']' + '.coneDirection'), this.coneDirection);
+  }
+
+  setLightPosition(context) {
+    const gl = context.gl;
+    if (!context.shader || !isValidUniformLocation(gl.getUniformLocation(context.shader, this.uniform+'Pos' + '[' + this.index + ']'))) {
+      return;
+    }
+    const position = this._worldPosition || this.position;
+    gl.uniform3f(gl.getUniformLocation(context.shader, this.uniform+'Pos[' + this.index + ']'), position[0], position[1], position[2]);
+    // and for spotlights
+    gl.uniform3f(gl.getUniformLocation(context.shader, this.uniform+'PosOriginal[' + this.index + ']'), this.position[0], this.position[1], this.position[2]);
+  }
+
+  computeLightPosition(context) {
+    //transform with the current model view matrix
+    const modelViewMatrix = mat4.multiply(mat4.create(), context.viewMatrix, context.sceneMatrix);
+    const original = this.position;
+    const position =  vec4.transformMat4(vec4.create(), vec4.fromValues(original[0], original[1],original[2], 1), modelViewMatrix);
+
+    this._worldPosition = position;
+  }
+
+  /**
+   * set the light uniforms without updating the last light position
+   */
+  setLight(context) {
+    this.setLightPosition(context);
+    this.setLightUniforms(context);
+  }
+
+  render(context) {
+    this.computeLightPosition(context);
+    this.setLight(context);
+
+    //since this a transformation node update the matrix according to my position
+    this.matrix = glm.translate(this.position[0], this.position[1], this.position[2]);
+    //render children
+    super.render(context);
+  }
 }
