@@ -39,7 +39,7 @@ var volleyballSceneTranNode; //complete scene
 var volleyballTranNode; //ball translation
 var volleyballDirection = 1.0; //1 or -1, so the ball flies back and forth
 var volleyballSpeed = 0;  //for time-based animation
-var volleyballDistance = 100.0; //how far the ball should fly (distance between jawa)
+var volleyballDistance = 100.0; //how far the ball should fly (distance between r2d2)
 var volleyballLocation = 0; //current location in volleyballDistance
 
 //sandcrawler scene 2
@@ -88,21 +88,16 @@ function createSceneGraph(resources) {
   let sphereMatNode = new MaterialSGNode();
   sphereTranNode = new TransformationSGNode(glm.transform({translate: [500, -200, 0]}));
 
-  let rect = makeRect(1.5, 1.3);
-  let rectShaderNode = new ShaderSGNode(createProgram(gl, resources.whiteVs, resources.whiteFs));   // trying to use a different shader - how to combine shader results?
-  let rectModelNode = new RenderSGNode(rect);
-  let rectTexNode = new AdvancedTextureSGNode(resources.tex);
-  let rectMatNode = new MaterialSGNode();
-  let rectTranNode = new TransformationSGNode(glm.transform({translate: [-6, -6, -6]}));
-
   let lightSphere = makeSphere(0.5, 20, 20);
   let lightModelNode = new RenderSGNode(lightSphere);
-  let lightTexNode = new AdvancedTextureSGNode(resources.sunTex);
+  let lightTexNode = new AdvancedTextureSGNode(resources.tex);
   let lightMatNode = new MaterialSGNode();
   let lightNode = new MyLightNode([300, -150, 300], 0, 30, [1,1,1]);
 
   let light2Sphere = makeSphere(20, 20, 20);
   let light2ModelNode = new RenderSGNode(light2Sphere);
+  let light2TexNode = new AdvancedTextureSGNode(resources.tex);
+  let light2MatNode = new MaterialSGNode();
   let light2Node = new MyLightNode([1000, -500, 1000], 1, 180, [0,1,0]);
   light2TranNode = new TransformationSGNode(glm.transform({translate: [500, -250, 0]}));
   // --------------------- camera test scene ------------------------
@@ -112,7 +107,7 @@ function createSceneGraph(resources) {
   let billboard = makeRect(10, 20);
   //let billShaderNode = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));   // trying to use a different shader - how to combine shader results?
   let billModelNode = new RenderSGNode(billboard);
-  let billTexNode = new AdvancedTextureSGNode(resources.jawaTex);
+  let billTexNode = new AdvancedTextureSGNode(resources.tuskenTex);
   let billMatNode = new MaterialSGNode();
   billTranNode = new TransformationSGNode(glm.transform({translate: [450, -10, 330]}));
 
@@ -124,21 +119,21 @@ function createSceneGraph(resources) {
   let volleyballMatNode = new MaterialSGNode();
   volleyballTranNode = new TransformationSGNode(glm.transform({translate: [0, -15, 0]}));
 
-  // jawa 1
-  let jawa1 = resources.jawa;
-  //let jawaShaderNode1 = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));
-  let jawaModelNode1 = new RenderSGNode(jawa1);
-  let jawaTexNode1 = new AdvancedTextureSGNode(resources.tex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
-  let jawaMatNode1 = new MaterialSGNode();
-  let jawaTranNode1 = new TransformationSGNode(glm.transform({rotateX: 180, rotateY: -90, scale:0}));
+  // r2d2 1
+  let r2d21 = resources.r2d2;
+  //let r2d2ShaderNode1 = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));
+  let r2d2ModelNode1 = new RenderSGNode(r2d21);
+  let r2d2TexNode1 = new AdvancedTextureSGNode(resources.tex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
+  let r2d2MatNode1 = new MaterialSGNode();
+  let r2d2TranNode1 = new TransformationSGNode(glm.transform({rotateX: 180, rotateY: -90, scale:0}));
 
-  // jawa 2
-  let jawa2 = resources.jawa;
-  //let jawaShaderNode2 = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));
-  let jawaModelNode2 = new RenderSGNode(jawa2);
-  let jawaTexNode2 = new AdvancedTextureSGNode(resources.tex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
-  let jawaMatNode2 = new MaterialSGNode();
-  let jawaTranNode2 = new TransformationSGNode(glm.transform({translate: [volleyballDistance, 0, 0], rotateX: 180, rotateY: 90}));
+  // r2d2 2
+  let r2d22 = resources.r2d2;
+  //let r2d2ShaderNode2 = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));
+  let r2d2ModelNode2 = new RenderSGNode(r2d22);
+  let r2d2TexNode2 = new AdvancedTextureSGNode(resources.tex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
+  let r2d2MatNode2 = new MaterialSGNode();
+  let r2d2TranNode2 = new TransformationSGNode(glm.transform({translate: [volleyballDistance, 0, 0], rotateX: 180, rotateY: 90}));
 
   // volleyball scene transformation
   volleyballSceneTranNode = new TransformationSGNode(glm.transform({translate: [300, 20, 330], scale: 0.5, rotateY: 45}));
@@ -219,13 +214,6 @@ function createSceneGraph(resources) {
   sandcrawlerBodyTexNode.append(sandcrawlerBodyModelNode);
   root.append(sandcrawlerTranNode);
 
-  // show leia
-  leiaTranNode.append(leiaMatNode);
-  leiaMatNode.append(leiaTexNode);
-  leiaTexNode.append(enableTexNode);
-  leiaTexNode.append(leiaModelNode);
-  root.append(leiaTranNode);
-
   // show billboard
   billMatNode.append(billTexNode);
   billTexNode.append(enableTexNode);
@@ -241,24 +229,24 @@ function createSceneGraph(resources) {
   volleyballTexNode.append(volleyballModelNode);
   //volleyballShaderNode.append(volleyballTexNode);
 
-  // show jawa1
-  jawaTranNode1.append(jawaMatNode1);
-  jawaMatNode1.append(jawaTexNode1);
-  jawaTexNode1.append(enableTexNode);
-  jawaTexNode1.append(jawaModelNode1);
-  //jawaShaderNode1.append(jawaTexNode1);
+  // show r2d21
+  r2d2TranNode1.append(r2d2MatNode1);
+  r2d2MatNode1.append(r2d2TexNode1);
+  r2d2TexNode1.append(enableTexNode);
+  r2d2TexNode1.append(r2d2ModelNode1);
+  //r2d2ShaderNode1.append(r2d2TexNode1);
 
-  // show jawa2
-  jawaTranNode2.append(jawaMatNode2);
-  jawaMatNode2.append(jawaTexNode2);
-  jawaTexNode2.append(enableTexNode);
-  jawaTexNode2.append(jawaModelNode2);
-  //jawaShaderNode2.append(jawaTexNode2);
+  // show r2d22
+  r2d2TranNode2.append(r2d2MatNode2);
+  r2d2MatNode2.append(r2d2TexNode2);
+  r2d2TexNode2.append(enableTexNode);
+  r2d2TexNode2.append(r2d2ModelNode2);
+  //r2d2ShaderNode2.append(r2d2TexNode2);
 
   // perform transformation on whole scene 1
   volleyballSceneTranNode.append(volleyballTranNode);
-  volleyballSceneTranNode.append(jawaTranNode1);
-  volleyballSceneTranNode.append(jawaTranNode2);
+  volleyballSceneTranNode.append(r2d2TranNode1);
+  volleyballSceneTranNode.append(r2d2TranNode2);
   root.append(volleyballSceneTranNode);
 
   // show luke
@@ -299,13 +287,6 @@ function createSceneGraph(resources) {
   sphereTexNode.append(sphereModelNode);
   root.append(sphereTranNode);
 
-  rectShaderNode.append(rectTranNode);
-  rectTranNode.append(rectMatNode);
-  rectMatNode.append(rectTexNode);
-  rectTexNode.append(rectModelNode);
-  rectTexNode.append(enableTexNode);
-  root.append(rectShaderNode);
-
   lightNode.append(lightMatNode);
   lightMatNode.append(lightTexNode);
   lightTexNode.append(enableTexNode);
@@ -313,7 +294,10 @@ function createSceneGraph(resources) {
   root.append(lightNode);
 
   light2Node.append(light2ModelNode);
-  light2TranNode.append(light2Node);
+  light2MatNode.append(light2Node);
+  light2TexNode.append(enableTexNode);
+  light2TexNode.append(light2Node);
+  light2TranNode.append(light2TexNode);
   //root.append(light2TranNode);
   root.append(light2TranNode);
 
@@ -937,7 +921,6 @@ loadResources({
 
   // models
   leia: 'assets/models/leia/Leia/Leia.obj',
-  jawa: 'assets/models/R2D2/R2D2.obj',
   luke: 'assets/models/Luke/Luke yavin.obj',
   r2d2: 'assets/models/R2D2/R2D2.obj',
   landspeeder: 'assets/models/Landspeeder/Landspeeder.obj'
