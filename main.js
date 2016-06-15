@@ -45,6 +45,7 @@ var volleyballLocation = 0; //current location in volleyballDistance
 //sandcrawler scene 2
 var sandcrawlerTranNode;
 var sandcrawlerPlatformTranNode;
+var sandcrawlerMoved = 0; //how much the sandcrawler has moved
 var sandcrawlerPlatformDegrees = 0; //how much the platform has rotated already
 
 //landspeeder scene 3
@@ -92,7 +93,7 @@ function createSceneGraph(resources) {
   let lightModelNode = new RenderSGNode(lightSphere);
   let lightTexNode = new AdvancedTextureSGNode(resources.tex);
   let lightMatNode = new MaterialSGNode();
-  let lightNode = new MyLightNode([300, -150, 300], 0, 30, [1,1,1]);
+  let lightNode = new MyLightNode([300, -350, 300], 0, 30, [1,1,1]);
 
   let light2Sphere = makeSphere(20, 20, 20);
   let light2ModelNode = new RenderSGNode(light2Sphere);
@@ -109,7 +110,7 @@ function createSceneGraph(resources) {
   let billModelNode = new RenderSGNode(billboard);
   let billTexNode = new AdvancedTextureSGNode(resources.tuskenTex);
   let billMatNode = new MaterialSGNode();
-  billTranNode = new TransformationSGNode(glm.transform({translate: [450, -10, 330]}));
+  billTranNode = new TransformationSGNode(glm.transform({translate: [240, -25, 520]}));
 
   // volleyball
   let volleyball = makeSphere(4, 0, 0);
@@ -136,7 +137,7 @@ function createSceneGraph(resources) {
   let r2d2TranNode2 = new TransformationSGNode(glm.transform({translate: [volleyballDistance, 0, 0], rotateX: 180, rotateY: 90}));
 
   // volleyball scene transformation
-  volleyballSceneTranNode = new TransformationSGNode(glm.transform({translate: [300, 20, 330], scale: 0.5, rotateY: 45}));
+  volleyballSceneTranNode = new TransformationSGNode(glm.transform({translate: [180, 50, 300], scale: 0.5, rotateY: 45}));
   //...scene 1
 
   // scene 2 sandcrawler...
@@ -153,7 +154,7 @@ function createSceneGraph(resources) {
   let sandcrawlerBodyTexNode = new AdvancedTextureSGNode(resources.rustyMetalTex);
   let sandcrawlerCrawlersTranNode = new TransformationSGNode(glm.transform({translate: [0.5, -0.05, 0]}));    // position crawlers below body
   let sandcrawlerMatNode = new MaterialSGNode();
-  sandcrawlerTranNode = new TransformationSGNode(glm.transform({translate: [500, -50, 400], rotateX: 180, rotateY: 180, scale: 50}));
+  sandcrawlerTranNode = new TransformationSGNode(glm.transform({translate: [600, 20, 500], rotateX: 180, rotateY: 180, scale: 50}));
   //...scene 2
 
   //scene 3...
@@ -185,7 +186,7 @@ function createSceneGraph(resources) {
   let landspeederMatNode = new MaterialSGNode();
   landspeederTranNode = new TransformationSGNode(glm.transform({translate: [-25,0,200], rotateX: 180, scale: 15, rotateY: 180}));
 
-  landspeederSceneTranNode = new TransformationSGNode(glm.transform({translate: [400, 20, 430], scale: 0.5, rotateY: 0}));
+  landspeederSceneTranNode = new TransformationSGNode(glm.transform({translate: [910, 30, 730], scale: 0.5, rotateY: 0}));
   //...scene 3
 
   // test terrain generation from heightmap
@@ -786,6 +787,7 @@ function render(timeInMilliseconds) {
   requestAnimationFrame(render);
 }
 
+//rotates a light source above the map in a circle around a point somewhere in the middle of the map
 function renderMovingLightSource(timeDelta){
   var translate1 = mat4.create();
   translate1 = glm.translate(0, 0, 500);
@@ -801,7 +803,7 @@ function renderMovingLightSource(timeDelta){
 //checks if camera is close enough to an animation scene to start animation
 function cameraIsInRadius(point){
   var distance = Math.sqrt(Math.pow(point[0] - camera.position.x, 2) + Math.pow(point[1] - camera.position.y, 2) + Math.pow(point[2] - camera.position.z, 2))
-  if(distance <= 300){
+  if(distance <= 500){
     return true;
   }
   return false;
@@ -828,9 +830,14 @@ function renderVolleyballScene(timeDelta){
 }
 
 function renderSandcrawlerScene(timeDelta){
-  if(sandcrawlerPlatformDegrees < 70){
-    if(cameraIsInRadius([sandcrawlerTranNode.matrix[12], sandcrawlerTranNode.matrix[13], sandcrawlerTranNode.matrix[14]])){
-      var degreesDelta = 10*timeDelta;
+  if(cameraIsInRadius([sandcrawlerTranNode.matrix[12], sandcrawlerTranNode.matrix[13], sandcrawlerTranNode.matrix[14]])){
+    if(sandcrawlerMoved < 1){ //moves the sandcrawler to a certain point
+      var move = timeDelta*0.15;
+      sandcrawlerTranNode.matrix = mat4.multiply(mat4.create(), sandcrawlerTranNode.matrix, glm.translate(move, 0, 0));
+      sandcrawlerMoved += move;
+    }
+    else if(sandcrawlerPlatformDegrees < 70){ //rotates/opens the platform/ramp of the sandcrawler
+      var degreesDelta = 12*timeDelta;
       sandcrawlerPlatformDegrees += degreesDelta;
       sandcrawlerPlatformTranNode.matrix = mat4.multiply(mat4.create(), sandcrawlerPlatformTranNode.matrix, glm.translate(0, 0, -timeDelta*0.045));
       sandcrawlerPlatformTranNode.matrix = mat4.multiply(mat4.create(), sandcrawlerPlatformTranNode.matrix, glm.rotateY(degreesDelta));
@@ -840,19 +847,19 @@ function renderSandcrawlerScene(timeDelta){
 
 function renderLandspeederScene(timeDelta){
   if(cameraIsInRadius([landspeederSceneTranNode.matrix[12], landspeederSceneTranNode.matrix[13], landspeederSceneTranNode.matrix[14]])){
-    if(lukeDegrees < 90){
+    if(lukeDegrees < 90){ //turns Luke 90° towards the landspeeder
       var degreesDelta = 30*timeDelta;
       lukeDegrees += degreesDelta;
       lukeTranNode.matrix = mat4.multiply(mat4.create(), lukeTranNode.matrix, glm.rotateY(-degreesDelta));
     }
-    else if(lukeMoved < 7){
+    else if(lukeMoved < 7){ //moves Luke towards the landspeeder
       var moveDelta = 4*timeDelta;
       lukeMoved += moveDelta;
       lukeTranNode.matrix = mat4.multiply(mat4.create(), lukeTranNode.matrix, glm.translate(moveDelta, 0, 0));
-      if(lukeMoved >= 7){
+      if(lukeMoved >= 7){ //Luke disappears when reaching the landspeeder
         lukeTranNode.matrix = mat4.create();
       }
-    } else{
+    } else{ //move the landspeeder
       var moveDelta = 10*timeDelta;
       landspeederTranNode.matrix = mat4.multiply(mat4.create(), landspeederTranNode.matrix, glm.translate(0, 0, moveDelta));
     }
