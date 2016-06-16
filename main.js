@@ -831,15 +831,15 @@ function renderVolleyballScene(timeDelta){
 
 function renderSandcrawlerScene(timeDelta){
   if(cameraIsInRadius([sandcrawlerTranNode.matrix[12], sandcrawlerTranNode.matrix[13], sandcrawlerTranNode.matrix[14]])){
-    if(sandcrawlerMoved < 1){ //moves the sandcrawler to a certain point
-      var move = timeDelta*0.15;
+    if(sandcrawlerMoved < 1.1){ //moves the sandcrawler to a certain point
+      var move = timeDelta*0.1;
       sandcrawlerTranNode.matrix = mat4.multiply(mat4.create(), sandcrawlerTranNode.matrix, glm.translate(move, 0, 0));
       sandcrawlerMoved += move;
     }
-    else if(sandcrawlerPlatformDegrees < 70){ //rotates/opens the platform/ramp of the sandcrawler
-      var degreesDelta = 12*timeDelta;
+    if(sandcrawlerPlatformDegrees < 70){ //rotates/opens the platform/ramp of the sandcrawler
+      var degreesDelta = 6*timeDelta;
       sandcrawlerPlatformDegrees += degreesDelta;
-      sandcrawlerPlatformTranNode.matrix = mat4.multiply(mat4.create(), sandcrawlerPlatformTranNode.matrix, glm.translate(0, 0, -timeDelta*0.045));
+      sandcrawlerPlatformTranNode.matrix = mat4.multiply(mat4.create(), sandcrawlerPlatformTranNode.matrix, glm.translate(0, 0, -timeDelta*0.0225));
       sandcrawlerPlatformTranNode.matrix = mat4.multiply(mat4.create(), sandcrawlerPlatformTranNode.matrix, glm.rotateY(degreesDelta));
     }
   }
