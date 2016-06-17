@@ -1,37 +1,75 @@
 //the OpenGL context
-var gl = null,
-    program = null;
+var gl = null;
+
+// shader programs
+var program = null,
+    postProcessProgram = null,
+    alphaProgram = null;
+
+// utility
+var resources = null;
+var width = 512, height = 512;
+
+// variables for 2nd rendering step
+var renderTargetFramebuffer = null;
+var renderTargetColorTexture = null;
+var renderTargetDepthTexture = null;
+var distortionMapTex = null;
 
 // camera control, set starting viewpoint here!
+var cameraEnabled = false;
 const camera = {
-  rotation: {
-    x: 3.85,
-    y: 149.55
+  rotation: {       // TODO y must never be 0! (normal matrix computation fails)
+                    // TODO when enabling free camera during flight, view direction is reset to rotation (how to update rotation angles while computing flight camera rotations)
+    x: 7.91,
+    y: 149.49
   },
   position: {
-    x: -500,
-    y: -500,
-    z: -100
+    x: 108,
+    y: -291,
+    z: 1542
   },
   direction: {
     x: 0,
     y: 0,
     z: 0
   },
-  speed: 30  // TODO choose speed
+  speed: 30
 };
 
-//the last timestamp a frame was rendered (for time-based animation)
-var timePrev = 0;
+// descripes the current camera flight plan
+const flight = {
+  // two types:
+  // flying in a straight line
+  straight: false,
+  // circling around a point
+  circling: false,
+  // parameters:
+  // duration in milliseconds
+  duration: 0,
+  // starting point of flight
+  origin: vec3.fromValues(0,0,0),
+  // point to reach/circle around
+  target: vec3.fromValues(0,0,0),
+  // circling only: degrees turned
+  degrees: 0.0,
+  // specifies in which direction to jump when starting a circling flight - see todo in view matrix calculation
+  initialJumpDir: 1,
+  // function that is called after the destination is reached/degrees circled
+  callback: function() {},
+  // convenience: information about next flight (see straight calculations in render)
+  next: "",
+  nextTarget: vec3.fromValues(0,0,0),
+  // specifies that 100/turnPart % of duration are dedicated to camera orientation towards the target
+  turnPart: 0
+}
 
-var sphereTranNode;
-
-// scenegraph
+// scenegraph and animation stuff
 var root = null;
-var light2TranNode;
-var light2TranY = 0;
+var timePrev = 0;
 var leiaRotNode;
 var billTranNode;
+var sun1TranNode;
 
 // animation scenes
 //volleyball scene 1
@@ -54,85 +92,184 @@ var lukeTranNode;
 var landspeederTranNode;
 var lukeDegrees = 0; //how much luke has rotated already
 var lukeMoved = 0; //how much luke moved to his landspeeder already
+var leiaTranNode;
+
 
 /**
  * initializes OpenGL context, compile shader, and load buffers
  */
 function init(resources) {
   //create a GL context
-  gl = createContext(800 /*width*/, 600 /*height*/); // TODO which width and height?
+  gl = createContext(width /*width*/, height /*height*/); // TODO which width and height?
 
+  // z-buffer
   gl.enable(gl.DEPTH_TEST);
+  // allow alpha textures
+  gl.enable (gl.BLEND) ;
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
   //compile and link shader program
   program = createProgram(gl, resources.vs, resources.fs);
+  postProcessProgram = createProgram(gl, resources.postProcessVs, resources.postProcessFs);
+  alphaProgram = createProgram(gl, resources.alphaVs, resources.alphaFs);
+
+  this.resources = resources;
+
+  // initialize framebuffer and connected textures to allow to texture rendering (for post processing)
+  initRenderToTexture();
 
   //create scenegraph
   root = createSceneGraph(resources);
 
+  // initialize distortion map used in post process shader
+  initDistortionMapTexture(resources.distortionMap);
+
+  // setup controls
   initInteraction(gl.canvas);
+
+  // define camera flight using bound callback functions (navigate with free camera, notate positions (allow debug output) then reconstruct the flight here)
+  // scene 1
+  setupFlight(true, false, 5000, 0, [192,-25,592], 0, 1, 3, "circle", [196,30,299],
+    // after finishing straight flight -> setup circling flight
+    setupFlight.bind(this, false, true, 5000, 5000, [196,30,299], 160, 1, 3, "straight", [233,-30,411],
+      // scene 2
+      setupFlight.bind(this, true, false, 4000, 10000, [233,-30,411], 0, 1, 2, "circle", [519,10,531],
+        setupFlight.bind(this, false, true, 6000, 14000, [519,10,531], 320, -1, 3, "straight", [734,-30,742],
+          // scene 3
+          setupFlight.bind(this, true, false, 3000, 20000, [734,-30,742], 0, 1, 2, "circle", [903, 15, 732],
+            setupFlight.bind(this, false, true, 3000, 23000, [903, 15, 732], 100, 1, 3, "straight", [905, 5, 1000],
+              setupFlight.bind(this, true, false, 4000, 26000, [905, 5, 1000], 0, 1, 2, "", [0,0,0],
+                // ends the flight
+                setupFlight.bind(this, false, false, 0, 0, [0,0,0], 0, 0, 0, "", [0,0,0], null)
+              )
+            )
+          )
+        )
+      )
+    )
+  );
+}
+
+/* initializes the distortion map texture by creating a texture from the given image */
+function initDistortionMapTexture(image) {
+  gl.activeTexture(gl.TEXTURE0);
+  distortionMapTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, distortionMapTex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);  // repeat needed for shader effect
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+}
+
+function initRenderToTexture() {
+  var depthTextureExt = gl.getExtension("WEBGL_depth_texture");
+  if(!depthTextureExt) { alert('No depth texture support!!!'); return; }
+
+  //generate color texture (required mainly for debugging and to avoid bugs in some WebGL platforms)
+  renderTargetFramebuffer = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, renderTargetFramebuffer);
+
+  //create color texture
+  renderTargetColorTexture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, renderTargetColorTexture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+  //create depth texture
+  renderTargetDepthTexture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, renderTargetDepthTexture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT, width, height, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_SHORT, null);
+
+  //bind textures to framebuffer
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, renderTargetColorTexture, 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, renderTargetDepthTexture ,0);
+
+  if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!=gl.FRAMEBUFFER_COMPLETE)
+    {alert('Framebuffer incomplete!');}
+
+  //clean up
+  gl.bindTexture(gl.TEXTURE_2D, null);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 }
 
 /**
- * builds up the scenegraph and returns the root node
+  * sets the parameters to run a flight animation while rendering
+  * @param callback: it is intended to use setupFlight.bind(this, ...parameters for next flight animation...) for this parameter, which after completing this flight (duration over) sets up the parameters for the next one.
+  * This way arbitrary long sequences of flight animations can be defined before starting to render the movie.
+  * for other parameters see flight datastructure
+  */
+function setupFlight(straight, circling, duration, startTime, target, degrees, initialJumpDir, turnPart, next, nextTarget, callback) {
+  // stop camera if end of flight
+  if(callback == null) {
+    cameraEnabled = true;
+  } else {
+    flight.straight = straight;
+    flight.circling = circling;
+    flight.duration = duration;
+    flight.startTime = startTime;
+    flight.origin = vec3.fromValues(camera.position.x, camera.position.y, camera.position.z);
+    flight.target = target;
+    flight.degrees = degrees;
+    flight.initialJumpDir = initialJumpDir;
+    flight.turnPart = turnPart;
+    flight.next = next;
+    flight.nextTarget = nextTarget;
+    flight.callback = callback;
+  }
+}
+
+/**
+ * builds up the scenegraph and sets the root and postProcess nodes
  */
 function createSceneGraph(resources) {
   // TODO maybe compact this whole stuff a little (make use of children constructor)
-
   let root = new ShaderSGNode(program);
   let enableTexNode = new SetUniformSGNode('u_enableObjectTexture', true);
 
-  // --------------------- camera test scene ------------------------
-  let sphere = makeSphere();
-  let sphereModelNode = new RenderSGNode(sphere);
-  let sphereTexNode = new AdvancedTextureSGNode(resources.tex);
-  let sphereMatNode = new MaterialSGNode();
-  sphereTranNode = new TransformationSGNode(glm.transform({translate: [500, -200, 0]}));
-
-  let lightSphere = makeSphere(0.5, 20, 20);
-  let lightModelNode = new RenderSGNode(lightSphere);
-  let lightTexNode = new AdvancedTextureSGNode(resources.tex);
-  let lightMatNode = new MaterialSGNode();
-  let lightNode = new MyLightNode([300, -350, 300], 0, 30, [1,1,1]);
-
-  let light2Sphere = makeSphere(20, 20, 20);
-  let light2ModelNode = new RenderSGNode(light2Sphere);
-  let light2TexNode = new AdvancedTextureSGNode(resources.tex);
-  let light2MatNode = new MaterialSGNode();
-  let light2Node = new MyLightNode([1000, -500, 1000], 1, 180, [0,1,0]);
-  light2TranNode = new TransformationSGNode(glm.transform({translate: [500, -250, 0]}));
-  // --------------------- camera test scene ------------------------
+  // suns
+  let sun1Sphere = makeSphere(20, 20, 20);
+  let sun1ModelNode = new RenderSGNode(sun1Sphere);
+  let sun1TexNode = new AdvancedTextureSGNode(resources.lightTex);
+  let sun1MatNode = new MaterialSGNode();
+  sun1MatNode.emission = [1,1,1,1];
+  let sun1Node = new MyLightNode([1000, 0, 1000], 0, 180, [0,1,0]);
+  sun1TranNode = new TransformationSGNode(glm.transform({translate: [500, -1000, 0]}));
 
   //scene 1...
   // billboard
-  let billboard = makeRect(10, 20);
-  //let billShaderNode = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));   // trying to use a different shader - how to combine shader results?
+  let billboard = makeRect(20, 10);
+  let billShaderNode = new ShaderSGNode(alphaProgram);   // trying to use a different shader - how to combine shader results?
   let billModelNode = new RenderSGNode(billboard);
-  let billTexNode = new AdvancedTextureSGNode(resources.tuskenTex);
+  let billTexNode = new AdvancedTextureSGNode(resources.raidersWatchingTex);
   let billMatNode = new MaterialSGNode();
-  billTranNode = new TransformationSGNode(glm.transform({translate: [240, -25, 520]}));
+  billTranNode = new TransformationSGNode(glm.transform({translate: [235, -20, 520]}));
 
   // volleyball
   let volleyball = makeSphere(4, 0, 0);
-  //let volleyballShaderNode = new ShaderSGNode(createProgram(gl, resources.whiteVs, resources.whiteFs));
   let volleyballModelNode = new RenderSGNode(volleyball);
-  let volleyballTexNode = new AdvancedTextureSGNode(resources.tex);
+  let volleyballTexNode = new AdvancedTextureSGNode(resources.wilsonTex);
   let volleyballMatNode = new MaterialSGNode();
   volleyballTranNode = new TransformationSGNode(glm.transform({translate: [0, -15, 0]}));
 
   // r2d2 1
   let r2d21 = resources.r2d2;
-  //let r2d2ShaderNode1 = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));
   let r2d2ModelNode1 = new RenderSGNode(r2d21);
-  let r2d2TexNode1 = new AdvancedTextureSGNode(resources.tex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
+  let r2d2TexNode1 = new AdvancedTextureSGNode(resources.r2Tex);  // TODO (for all models) use models with decent textures - using single color at the moment
   let r2d2MatNode1 = new MaterialSGNode();
   let r2d2TranNode1 = new TransformationSGNode(glm.transform({rotateX: 180, rotateY: -90, scale:0}));
 
   // r2d2 2
   let r2d22 = resources.r2d2;
-  //let r2d2ShaderNode2 = new ShaderSGNode(createProgram(gl, resources.vs, resources.fs));
   let r2d2ModelNode2 = new RenderSGNode(r2d22);
-  let r2d2TexNode2 = new AdvancedTextureSGNode(resources.tex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
+  let r2d2TexNode2 = new AdvancedTextureSGNode(resources.r2Tex);
   let r2d2MatNode2 = new MaterialSGNode();
   let r2d2TranNode2 = new TransformationSGNode(glm.transform({translate: [volleyballDistance, 0, 0], rotateX: 180, rotateY: 90}));
 
@@ -141,18 +278,18 @@ function createSceneGraph(resources) {
   //...scene 1
 
   // scene 2 sandcrawler...
-  // TODO add spotlight to sandcrawler graph
-  // TODO must animate one part separately from rest of model....slide out and rotate platform from between body and crawlers (as some kind of stair...put opening with jawas onto lower body as texture)
-  // TODO find crawler texture
   let sandcrawlerBody = makeSandcrawlerBody();
   let sandcrawlerCrawlersNode = composeCrawlerQuad(resources);
   let sandcrawlerPlatformModelNode = new RenderSGNode(makeRect(0.5, 0.25));
   let sandcrawlerBodyModelNode = new RenderSGNode(sandcrawlerBody);
   let sandcrawlerPlatformTexNode = new AdvancedTextureSGNode(resources.platformTex);
-  //let sandcrawlerPlatformTranNode = new TransformationSGNode(glm.transform({translate: [0.5, 0, 0.25], rotateX: -90}));
   sandcrawlerPlatformTranNode = new TransformationSGNode(glm.transform({translate: [1.15, 0.2, 0.25], rotateX: -90, rotateY: -45, scale:0.7}));
   let sandcrawlerBodyTexNode = new AdvancedTextureSGNode(resources.rustyMetalTex);
   let sandcrawlerCrawlersTranNode = new TransformationSGNode(glm.transform({translate: [0.5, -0.05, 0]}));    // position crawlers below body
+  let sandcrawlerSpotlightNode = new MyLightNode([1.6, 0.5, 0.25], 1, 30, [-1, 2, 1]);
+  let sandcrawlerSpotlightModelNode = new RenderSGNode(makeSphere(0.025, 20, 20));
+  let sandcrawlerSpotlightTexNode = new AdvancedTextureSGNode(resources.lightTex);
+  let sandcrawlerSpotlightMatNode = new MaterialSGNode();
   let sandcrawlerMatNode = new MaterialSGNode();
   sandcrawlerTranNode = new TransformationSGNode(glm.transform({translate: [600, 20, 500], rotateX: 180, rotateY: 180, scale: 50}));
   //...scene 2
@@ -161,50 +298,60 @@ function createSceneGraph(resources) {
   // luke
   let luke = resources.luke;
   let lukeModelNode = new RenderSGNode(luke);
-  let lukeTexNode = new AdvancedTextureSGNode(resources.tex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
+  let lukeTexNode = new AdvancedTextureSGNode(resources.hologramTex);
   let lukeMatNode = new MaterialSGNode();
   lukeTranNode = new TransformationSGNode(glm.transform({translate: [40,0,0], rotateX: 180, scale: 30, rotateY: 180}));
 
   // r2d2
   let r2d2 = resources.r2d2;
   let r2d2ModelNode = new RenderSGNode(r2d2);
-  let r2d2TexNode = new AdvancedTextureSGNode(resources.tex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
+  let r2d2TexNode = new AdvancedTextureSGNode(resources.r2Tex);
   let r2d2MatNode = new MaterialSGNode();
+  // r2d2 is made of...silver: http://devernay.free.fr/cours/opengl/materials.html
+  r2d2MatNode.ambient = [0.19225, 0.19225, 0.19225, 1];
+  r2d2MatNode.diffuse = [0.50754, 0.50754, 0.50754, 1];
+  r2d2MatNode.specular = [0.508273, 0.508273, 0.508273, 1];
+  r2d2MatNode.shininess = 0.4;
   let r2d2TranNode = new TransformationSGNode(glm.transform({translate: [15,0,0], rotateX: 180, rotateY: 90}));
 
   // leia
   let leia = resources.leia;
   let leiaModelNode = new RenderSGNode(leia);
-  let leiaTexNode = new AdvancedTextureSGNode(resources.tex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
+  let leiaTexNode = new AdvancedTextureSGNode(resources.hologramTex);
   let leiaMatNode = new MaterialSGNode();
-  let leiaTranNode = new TransformationSGNode(glm.transform({translate: [-25,0,-5], rotateX: 180, rotateY: -90}));
+  let leiaShaderNode = new ShaderSGNode(alphaProgram);  // leia is a hologram with an alpha texture
+  leiaTranNode = new TransformationSGNode(glm.transform({translate: [-25,0,-5], rotateX: 180, rotateY: -90}));
 
   // landspeeder
   let landspeeder = resources.landspeeder;
   let landspeederModelNode = new RenderSGNode(landspeeder);
-  let landspeederTexNode = new AdvancedTextureSGNode(resources.tex);   // TODO putting a texture doesn't really work here (whole texture used for every triangle?)
+  let landspeederTexNode = new AdvancedTextureSGNode(resources.speederTex);
   let landspeederMatNode = new MaterialSGNode();
+  // landspeeder is made of...copper: http://devernay.free.fr/cours/opengl/materials.html
+  landspeederMatNode.ambient = [0.19125, 0.0735, 0.0225, 1];
+  landspeederMatNode.diffuse = [0.7038, 0.27048, 0.0828, 1];
+  landspeederMatNode.specular = [0.256777, 0.137622, 0.086014, 1];
+  landspeederMatNode.shininess = 0.1;
   landspeederTranNode = new TransformationSGNode(glm.transform({translate: [-25,0,200], rotateX: 180, scale: 15, rotateY: 180}));
 
   landspeederSceneTranNode = new TransformationSGNode(glm.transform({translate: [910, 30, 730], scale: 0.5, rotateY: 0}));
   //...scene 3
 
-  // test terrain generation from heightmap
+  // terrain generation from heightmap
   let terrain = generateTerrain(resources.heightmap, 16, 16, 120);
   let terrainModelNode = new RenderSGNode(terrain);
   let terrainTexNode = new AdvancedTextureSGNode(resources.sandTex);
   let terrainMatNode = new MaterialSGNode();
   let terrainTranNode = new TransformationSGNode(glm.transform({translate: [0, 100, 0]}));
 
-  // show terrain
-  terrainTranNode.append(terrainMatNode);
-  terrainMatNode.append(terrainTexNode);
-  terrainTexNode.append(terrainModelNode);
-  terrainTexNode.append(enableTexNode);
-  root.append(terrainTranNode);
+
 
   // show sandcrawler
   sandcrawlerTranNode.append(sandcrawlerMatNode);
+  sandcrawlerMatNode.append(sandcrawlerSpotlightNode);
+  sandcrawlerSpotlightNode.append(sandcrawlerSpotlightMatNode);
+  sandcrawlerSpotlightMatNode.append(sandcrawlerSpotlightTexNode);
+  sandcrawlerSpotlightTexNode.append(sandcrawlerSpotlightModelNode);
   sandcrawlerMatNode.append(sandcrawlerBodyTexNode);
   sandcrawlerMatNode.append(sandcrawlerCrawlersTranNode);
   sandcrawlerMatNode.append(sandcrawlerPlatformTranNode);
@@ -215,11 +362,18 @@ function createSceneGraph(resources) {
   sandcrawlerBodyTexNode.append(sandcrawlerBodyModelNode);
   root.append(sandcrawlerTranNode);
 
+  // show terrain
+  terrainTranNode.append(terrainMatNode);
+  terrainMatNode.append(terrainTexNode);
+  terrainTexNode.append(terrainModelNode);
+  terrainTexNode.append(enableTexNode);
+  root.append(terrainTranNode);
+
   // show billboard
-  billMatNode.append(billTexNode);
+  billMatNode.append(billShaderNode);
+  billShaderNode.append(billTexNode);
   billTexNode.append(enableTexNode);
   billTexNode.append(billModelNode);
-  //billShaderNode.append(billTexNode);
   billTranNode.append(billMatNode);
   root.append(billTranNode);
 
@@ -228,21 +382,18 @@ function createSceneGraph(resources) {
   volleyballMatNode.append(volleyballTexNode);
   volleyballTexNode.append(enableTexNode);
   volleyballTexNode.append(volleyballModelNode);
-  //volleyballShaderNode.append(volleyballTexNode);
 
   // show r2d21
   r2d2TranNode1.append(r2d2MatNode1);
   r2d2MatNode1.append(r2d2TexNode1);
   r2d2TexNode1.append(enableTexNode);
   r2d2TexNode1.append(r2d2ModelNode1);
-  //r2d2ShaderNode1.append(r2d2TexNode1);
 
   // show r2d22
   r2d2TranNode2.append(r2d2MatNode2);
   r2d2MatNode2.append(r2d2TexNode2);
   r2d2TexNode2.append(enableTexNode);
   r2d2TexNode2.append(r2d2ModelNode2);
-  //r2d2ShaderNode2.append(r2d2TexNode2);
 
   // perform transformation on whole scene 1
   volleyballSceneTranNode.append(volleyballTranNode);
@@ -264,7 +415,8 @@ function createSceneGraph(resources) {
 
   // show leia
   leiaTranNode.append(leiaMatNode);
-  leiaMatNode.append(leiaTexNode);
+  leiaMatNode.append(leiaShaderNode);
+  leiaShaderNode.append(leiaTexNode);
   leiaTexNode.append(enableTexNode);
   leiaTexNode.append(leiaModelNode);
 
@@ -281,26 +433,13 @@ function createSceneGraph(resources) {
   landspeederSceneTranNode.append(landspeederTranNode);
   root.append(landspeederSceneTranNode);
 
-
-  sphereTranNode.append(sphereMatNode);
-  sphereMatNode.append(sphereTexNode);
-  sphereTexNode.append(enableTexNode);
-  sphereTexNode.append(sphereModelNode);
-  root.append(sphereTranNode);
-
-  lightNode.append(lightMatNode);
-  lightMatNode.append(lightTexNode);
-  lightTexNode.append(enableTexNode);
-  lightTexNode.append(sphereModelNode);
-  root.append(lightNode);
-
-  light2Node.append(light2ModelNode);
-  light2MatNode.append(light2Node);
-  light2TexNode.append(enableTexNode);
-  light2TexNode.append(light2Node);
-  light2TranNode.append(light2TexNode);
-  //root.append(light2TranNode);
-  root.append(light2TranNode);
+  // show suns
+  sun1Node.append(sun1ModelNode);
+  sun1MatNode.append(sun1Node);
+  sun1TexNode.append(enableTexNode);
+  sun1TexNode.append(sun1Node);
+  sun1TranNode.append(sun1TexNode);
+  root.append(sun1TranNode);
 
   return root;
 }
@@ -309,9 +448,7 @@ function createSceneGraph(resources) {
   * returns a (manually composed) sandcrawler body
   */
 function makeSandcrawlerBody() {
-  // TODO texture coodinates and... actually find a texture to use!
-  // TODO spotlights..?
-  // TODO weird flickering...z-buffer fighting?
+  // TODO problems with texture coodinates or normals
 
   // returns
   var vertices = [];
@@ -426,7 +563,7 @@ function makeSandcrawlerBody() {
   )
 
   // now build vertex - triangle datastructure to automatically compute normals
-  // TODO put triangle vertex indices in correct order for normal computation
+  // TODO put triangle vertex indices in correct order for normal computation?
   var vertexTriangles = [];
   vertexTriangles.push([0,1,3,  0,3,2]);
   vertexTriangles.push([1,0,3]);
@@ -514,13 +651,15 @@ function composeCrawlerQuad(resources) {
  * @param stepX|Y: how many pixels to skip in x|y direction when parsing the heightmap (must divide heightmap width|height)
  * @param heightModifier: resulting height is [0, 1] * heightScaling
  */
+// TODO as I realized now - this should have been done in a vertex shader D:
 function generateTerrain(heightmap, stepX, stepY, heightScaling) {
-  // TODO fix stepX|Y == (1,4,?) does not work! (incorrect triangle indices most likely)
+  // TODO fix stepX|Y == (1,4,?) somehow connects some endpoints of the plane creating triangles stretched over the whole terrain...
 
   if(heightmap.width % stepX != 0 || heightmap.height % stepY != 0) {
     return null;
   }
 
+  // read image data:
   // Create a Canvas element
   var canvas = document.createElement('canvas');
 
@@ -729,65 +868,17 @@ function calculateNormals(vertexTriangles, vertices, normal, flip) {
   });
 }
 
-/**
- * render one frame
- */
-function render(timeInMilliseconds) {
-  //calculate delta time for time-based animation
-  var timeNow = timeInMilliseconds / 1000; //convert timeInMilliseconds to seconds
-  var timeDelta = timeNow - timePrev;
-  timePrev = timeNow;
 
-  renderVolleyballScene(timeDelta);
-  renderSandcrawlerScene(timeDelta);
-  renderLandspeederScene(timeDelta);
-
-
-  gl.clearColor(0.9, 0.9, 0.9, 1.0);
-
-  //clear the buffer
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-  //setup context and camera matrices
-  const context = createSGContext(gl);
-
-  // TODO which Field of view/other parameters?
-  context.projectionMatrix = mat4.perspective(mat4.create(), 50, gl.drawingBufferWidth / gl.drawingBufferHeight, 0.01, 10000);
-
-  // free moving camera: https://sidvind.com/wiki/Yaw,_pitch,_roll_camera
-  // gl-matrix doc: http://glmatrix.net/docs/mat4.html
-  let center = [camera.position.x + Math.cos(camera.rotation.x) * Math.sin(camera.rotation.y), camera.position.y + Math.cos(camera.rotation.y), camera.position.z + Math.sin(camera.rotation.y) * Math.sin(camera.rotation.x)];
-  // camera orientation
-  let up = [0, 1, 0];
-  // generate view matrix from position, center and up
-  let lookAtMatrix = mat4.lookAt(mat4.create(), [camera.position.x, camera.position.y, camera.position.z], center, up);
-  context.viewMatrix = lookAtMatrix;
-
-  // extract normalized direction vector generated by lookAt - used to move in pointed direction
-  camera.direction.x = lookAtMatrix[2];
-  camera.direction.y = lookAtMatrix[6];
-  camera.direction.z = lookAtMatrix[10];
-
-  //console.log("rotationx: " + camera.rotation.x.toFixed(2) + "  |  rotationy: " + camera.rotation.y.toFixed(2) + "  |  x:" + camera.position.x.toFixed(2) + " y:" + camera.position.y.toFixed(2) + " z:" + camera.position.z.toFixed(2) + "  |  dirx:" + camera.direction.x.toFixed(2) + " diry:" + camera.direction.y.toFixed(2) + " dirz:" + camera.direction.z.toFixed(2));
-
-  //light2TranY += 0.5;
-  //light2TranNode.matrix = glm.transform({translate: [0, light2TranY, 0], rotateY: light2TranY/10});
-  //light2TranNode.matrix = glm.translate();
-
-
-
-
-  renderBillboard(context);
-  renderMovingLightSource(timeDelta);
-
-  //render scenegraph
-  root.render(context);
-
-  //request another call as soon as possible
-  requestAnimationFrame(render);
+//checks if camera is close enough to an animation scene to start animation
+function cameraIsInRadius(point, radius){
+  var distance = Math.sqrt(Math.pow(point[0] - camera.position.x, 2) + Math.pow(point[1] - camera.position.y, 2) + Math.pow(point[2] - camera.position.z, 2))
+  if(distance <= radius){
+    return true;
+  }
+  return false;
 }
 
-//rotates a light source above the map in a circle around a point somewhere in the middle of the map
+// animation transformation functions
 function renderMovingLightSource(timeDelta){
   var translate1 = mat4.create();
   translate1 = glm.translate(0, 0, 500);
@@ -797,21 +888,11 @@ function renderMovingLightSource(timeDelta){
   translate2 = glm.translate(0, 0, -500);
   var matrix1 = mat4.multiply(mat4.create(), translate1, rotate);
   var matrix2 = mat4.multiply(mat4.create(), matrix1, translate2);
-  light2TranNode.matrix = mat4.multiply(mat4.create(), light2TranNode.matrix, matrix2);
+  sun1TranNode.matrix = mat4.multiply(mat4.create(), sun1TranNode.matrix, matrix2);
 }
-
-//checks if camera is close enough to an animation scene to start animation
-function cameraIsInRadius(point){
-  var distance = Math.sqrt(Math.pow(point[0] - camera.position.x, 2) + Math.pow(point[1] - camera.position.y, 2) + Math.pow(point[2] - camera.position.z, 2))
-  if(distance <= 500){
-    return true;
-  }
-  return false;
-}
-
 function renderVolleyballScene(timeDelta){
   //animate only when camera is close enough to whole scene
-  if(cameraIsInRadius([volleyballSceneTranNode.matrix[12] + (volleyballDistance / 2), volleyballSceneTranNode.matrix[13], volleyballSceneTranNode.matrix[14]])){
+  if(cameraIsInRadius([volleyballSceneTranNode.matrix[12] + (volleyballDistance / 2), volleyballSceneTranNode.matrix[13], volleyballSceneTranNode.matrix[14]],500)){
     //volleyballDirection determines the direction the ball flies (back and forth)
     if(volleyballLocation <= 0){
       volleyballDirection = 1.0;
@@ -828,9 +909,8 @@ function renderVolleyballScene(timeDelta){
     volleyballLocation += volleyballSpeed;
   }
 }
-
 function renderSandcrawlerScene(timeDelta){
-  if(cameraIsInRadius([sandcrawlerTranNode.matrix[12], sandcrawlerTranNode.matrix[13], sandcrawlerTranNode.matrix[14]])){
+  if(cameraIsInRadius([sandcrawlerTranNode.matrix[12], sandcrawlerTranNode.matrix[13], sandcrawlerTranNode.matrix[14]], 500)){
     if(sandcrawlerMoved < 1.1){ //moves the sandcrawler to a certain point
       var move = timeDelta*0.1;
       sandcrawlerTranNode.matrix = mat4.multiply(mat4.create(), sandcrawlerTranNode.matrix, glm.translate(move, 0, 0));
@@ -844,9 +924,8 @@ function renderSandcrawlerScene(timeDelta){
     }
   }
 }
-
 function renderLandspeederScene(timeDelta){
-  if(cameraIsInRadius([landspeederSceneTranNode.matrix[12], landspeederSceneTranNode.matrix[13], landspeederSceneTranNode.matrix[14]])){
+  if(cameraIsInRadius([landspeederSceneTranNode.matrix[12], landspeederSceneTranNode.matrix[13], landspeederSceneTranNode.matrix[14]], 300)){
     if(lukeDegrees < 90){ //turns Luke 90° towards the landspeeder
       var degreesDelta = 30*timeDelta;
       lukeDegrees += degreesDelta;
@@ -857,15 +936,17 @@ function renderLandspeederScene(timeDelta){
       lukeMoved += moveDelta;
       lukeTranNode.matrix = mat4.multiply(mat4.create(), lukeTranNode.matrix, glm.translate(moveDelta, 0, 0));
       if(lukeMoved >= 7){ //Luke disappears when reaching the landspeeder
-        lukeTranNode.matrix = mat4.create();
+        lukeTranNode.matrix = glm.translate(0,100,0);
       }
     } else{ //move the landspeeder
       var moveDelta = 10*timeDelta;
       landspeederTranNode.matrix = mat4.multiply(mat4.create(), landspeederTranNode.matrix, glm.translate(0, 0, moveDelta));
     }
+
+    // spin leia hologram
+    leiaTranNode.matrix = mat4.multiply(mat4.create(), leiaTranNode.matrix, glm.rotateY(timeDelta*100));
   }
 }
-
 function renderBillboard(context){
   //render billboard
   //identity matrix
@@ -901,37 +982,214 @@ function renderBillboard(context){
   billTranNode.matrix = billTransformation;
 }
 
+
+/**
+ * render one frame (to the screen)
+ */
+function render(timeInMilliseconds) {
+  //calculate delta time for animation
+  //convert timeInMilliseconds in seconds
+  var timeNow = timeInMilliseconds / 1000;
+  var timeDelta = timeNow - timePrev;
+  timePrev = timeNow;
+
+
+  var viewMatrix;
+  // camera flight - calculate view matrix
+  // TODO keep looking in currentdirection if flight stops/interrupted
+  if(!cameraEnabled){
+    // how much of the complete flight duration has already passed?
+    var flightCompleted = Math.min((timeInMilliseconds - flight.startTime) / flight.duration, 1);
+    // allows flight stop, if start time hasn't been reached yet
+    if(flightCompleted < 0) {
+      flightCompleted = 0;
+    }
+
+    if(flight.straight) {
+      // move towards target
+      // flight route
+      var originToTarget = vec3.subtract(vec3.create(), flight.target, flight.origin);
+      // calculate the part of the route we should have completed at this time
+      var completedRoute = vec3.scale(vec3.create(), originToTarget, flightCompleted);
+      // calculate the position we should be on
+      var position = vec3.add(vec3.create(), completedRoute, flight.origin);
+      // set this as our position
+      camera.position.x = position[0];
+      camera.position.y = position[1];
+      camera.position.z = position[2];
+
+      // rotate view towards target, calculation: CURRENTTARGET = CURRENTDIR + (CURRENTDIR_TO_TARGET) * FLIGHTCOMPLETED, (currentTarget approaches target as flightCompleted approaches 1)
+      var currentDirToTarget = vec3.subtract(vec3.create(), flight.target, vec3.fromValues(camera.direction.x, camera.direction.y, camera.direction.z));
+      var currentTarget = vec3.add(vec3.create(), vec3.fromValues(camera.direction.x, camera.direction.y, camera.direction.z), vec3.scale(vec3.create(), currentDirToTarget, Math.min(flightCompleted * flight.turnPart, 1)));
+
+      // turn towards next flight target within this flight if next flight is circling (easier to implement here than turning while circling...)
+      if(flight.next === 'circle' && flightCompleted >= (1 - 1/flight.turnPart)) {
+        currentDirToTarget = vec3.subtract(vec3.create(), flight.nextTarget, currentTarget);
+        currentTarget = vec3.add(vec3.create(), currentTarget, vec3.scale(vec3.create(), currentDirToTarget, Math.min((flightCompleted - 1 + 1/flight.turnPart) * flight.turnPart, 1)));
+      }
+
+      // finally build the view matrix after calculating movement and rotation
+      viewMatrix = mat4.lookAt(mat4.create(), [camera.position.x, camera.position.y, camera.position.z], currentTarget, [0,1,0]);
+
+      //console.log("rotationx: " + camera.rotation.x.toFixed(2) + "  |  rotationy: " + camera.rotation.y.toFixed(2) + "  |  x:" + camera.position.x.toFixed(2) + " y:" + camera.position.y.toFixed(2) + " z:" + camera.position.z.toFixed(2) + "  |  dirx:" + camera.direction.x.toFixed(2) + " diry:" + camera.direction.y.toFixed(2) + " dirz:" + camera.direction.z.toFixed(2));
+
+    } else if(flight.circling) {
+      // circle around given target in current distance from target for given degrees
+      var radius = Math.abs(vec3.distance(vec3.fromValues(camera.position.x, camera.position.y, camera.position.z), vec3.fromValues(flight.target[0], camera.position.y, flight.target[2]))); // note as we circle on our (fixed) current y position, we actually calculate a circle and not a sphere
+
+      // avoid jump on start of circling by calculating which rotation is equivalent to the current position in the orbit of the target
+      var initialDeg = Math.acos((flight.origin[0] - flight.target[0])/radius) * (180/Math.PI);
+      var initialDeg2 = Math.asin((flight.origin[2] - flight.target[2])/radius) * (180/Math.PI);   // TODO why is this not the same as initalDeg
+      // how many degrees should we have rotated at this point?
+      var currentDegrees = flight.degrees * flightCompleted + Math.abs(initialDeg) * flight.initialJumpDir;   // TODO should sometimes be plus and sometimes be minus .... when? dirty fix - specified for each camera flight
+
+      // calculate the x,z point on the target orbit for the current degrees
+      camera.position.x = flight.target[0] + radius*Math.cos(glm.deg2rad(currentDegrees));
+      camera.position.z = flight.target[2] + radius*Math.sin(glm.deg2rad(currentDegrees));
+
+      // and plug them into lookat
+      viewMatrix = mat4.lookAt(mat4.create(), [camera.position.x, camera.position.y, camera.position.z], flight.target, [0,1,0]);
+
+      //console.log("rotationx: " + camera.rotation.x.toFixed(2) + "  |  rotationy: " + camera.rotation.y.toFixed(2) + "  |  x:" + camera.position.x.toFixed(2) + " y:" + camera.position.y.toFixed(2) + " z:" + camera.position.z.toFixed(2) + "  |  dirx:" + camera.direction.x.toFixed(2) + " diry:" + camera.direction.y.toFixed(2) + " dirz:" + camera.direction.z.toFixed(2));
+    }
+
+    // initiate next flight when we reached our position
+    if(flightCompleted == 1) {
+      // update camera direction to smoothly turn again to new target
+      camera.direction.x = flight.target[0];
+      camera.direction.y = flight.target[1];
+      camera.direction.z = flight.target[2];
+
+      flight.callback();
+    }
+
+  // free camera
+  } else {
+    // free moving camera: https://sidvind.com/wiki/Yaw,_pitch,_roll_camera
+    let center = [camera.position.x + Math.cos(camera.rotation.x) * Math.sin(camera.rotation.y), camera.position.y + Math.cos(camera.rotation.y), camera.position.z + Math.sin(camera.rotation.y) * Math.sin(camera.rotation.x)];
+    // generate view matrix from position, center and up
+    viewMatrix = mat4.lookAt(mat4.create(), [camera.position.x, camera.position.y, camera.position.z], center, [0,1,0]);
+
+    // extract normalized direction vector generated by lookAt - used to move in pointed direction
+    camera.direction.x = viewMatrix[2];
+    camera.direction.y = viewMatrix[6];
+    camera.direction.z = viewMatrix[10];
+    console.log("rotationx: " + camera.rotation.x.toFixed(2) + "  |  rotationy: " + camera.rotation.y.toFixed(2) + "  |  x:" + camera.position.x.toFixed(2) + " y:" + camera.position.y.toFixed(2) + " z:" + camera.position.z.toFixed(2) + "  |  dirx:" + camera.direction.x.toFixed(2) + " diry:" + camera.direction.y.toFixed(2) + " dirz:" + camera.direction.z.toFixed(2));
+  }
+  // view matrix calculated at this point!
+
+
+  // APPLICATION OF POST PROCESS SHADER:
+  // first render to texture
+  gl.bindFramebuffer(gl.FRAMEBUFFER, renderTargetFramebuffer);
+  //setup viewport
+  gl.viewport(0, 0, width, height);
+  gl.clearColor(176/255, 235/255, 255/255, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  //setup context and camera matrices
+  const context = createSGContext(gl);
+  // TODO which Field of view/other parameters?
+  context.projectionMatrix = mat4.perspective(mat4.create(), 50, gl.drawingBufferWidth / gl.drawingBufferHeight, 1, 5000);
+  context.viewMatrix = viewMatrix;
+
+  // do animation Transformations
+  renderVolleyballScene(timeDelta);
+  renderSandcrawlerScene(timeDelta);
+  renderLandspeederScene(timeDelta);
+  renderBillboard(context);
+  renderMovingLightSource(timeDelta);
+
+  // pfusch in inverse view matrix
+  // need to set program to set a uniform
+  gl.useProgram(program);
+  gl.uniformMatrix4fv(gl.getUniformLocation(program, 'u_invView'), false, mat4.invert(mat4.create(), context.viewMatrix));
+  //render scenegraph (into framebuffer)
+  root.render(context);
+  //disable framebuffer (render to screen again)
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+
+  // now do post processing (rendering framebuffer to screen using post process shader)
+  //setup viewport
+  gl.viewport(0, 0, width, height);
+  gl.clearColor(0.9, 0.9, 0.9, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  //activate the post processing shader
+  gl.useProgram(postProcessProgram);
+  // set some shader parameters
+  gl.uniform1f(gl.getUniformLocation(postProcessProgram, 'time'), timeInMilliseconds/1000);
+  gl.uniform1f(gl.getUniformLocation(postProcessProgram, 'distortionFactor'), 0.015);
+  gl.uniform1f(gl.getUniformLocation(postProcessProgram, 'riseFactor'), 0.75);
+  // set the texture to render in the shader (= pre-rendered scene)
+  gl.uniform1i(gl.getUniformLocation(postProcessProgram, 'u_sceneTex'), 0); // texture unit 0
+  // set the depthmap
+  gl.uniform1i(gl.getUniformLocation(postProcessProgram, 'u_depthMap'), 1); // texture unit 1
+  // distortion map
+  gl.uniform1i(gl.getUniformLocation(postProcessProgram, 'u_distortionMap'), 2); // texture unit 2
+  // bind and activate all needed textures
+  gl.activeTexture(gl.TEXTURE0 + 0);
+  gl.bindTexture(gl.TEXTURE_2D, renderTargetColorTexture);
+  gl.activeTexture(gl.TEXTURE0 + 1);
+  gl.bindTexture(gl.TEXTURE_2D, renderTargetDepthTexture);
+  gl.activeTexture(gl.TEXTURE0 + 2);  // texture unit 2
+  gl.bindTexture(gl.TEXTURE_2D, distortionMapTex);
+  // build a fullscreen quad on which we'll render the scene in the framebuffer
+  var buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  const arr = new Float32Array([
+    -1.0, -1.0,
+    1.0, -1.0,
+    -1.0, 1.0,
+    -1.0, 1.0,
+    1.0, -1.0,
+    1.0, 1.0]);
+  //copy data to GPU
+  gl.bufferData(gl.ARRAY_BUFFER, arr, gl.STATIC_DRAW);
+  const positionLocation = gl.getAttribLocation(postProcessProgram, 'a_position');
+  gl.enableVertexAttribArray(positionLocation);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+  // re-render the stored scene applying the post processing shader effect
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  //request another call as soon as possible
+  requestAnimationFrame(render);
+}
+
+
+
 //load the shader resources using a utility function
 loadResources({
-  // TODO shaders - copied from lab
-  vs: 'shader/shadow.vs.glsl',
-  fs: 'shader/shadow.fs.glsl',
-
-  // test different shader
-  whiteVs : 'shader/white.vs.glsl',
-  whiteFs : 'shader/white.fs.glsl',
+  // shaders
+  vs: 'shader/phong.vs.glsl',
+  fs: 'shader/phong.fs.glsl',
+  postProcessVs: 'shader/heatshimmer.vs.glsl',
+  postProcessFs: 'shader/heatshimmer.fs.glsl',
+  distortionMap: 'assets/distortion_map.jpg',
+  alphaVs: 'shader/alpha.vs.glsl',
+  alphaFs: 'shader/alpha.fs.glsl',
 
   // terrain
   heightmap: 'assets/terrain/heightmap.png',
   sandTex: 'assets/sand.jpg',
 
   // other textures
-  tex: 'assets/lava.jpg',
-  sunTex: 'assets/sun.jpg',
-  leiaTex: 'assets/models/leia/Leia/Leia Textures/Leia_Diff.png',
   rustyMetalTex: 'assets/rusty_metal.jpg',
   crawlerTex0: 'assets/crawlers0.jpg',
   crawlerTex1: 'assets/crawlers1.jpg',
   platformTex: 'assets/platform.jpg',
-  tuskenTex: 'assets/tusken.jpg',
-  jawaTex: 'assets/jawa.jpg',
+  hologramTex: 'assets/hologram.png',
+  speederTex: 'assets/speeder.jpg',
+  raidersWatchingTex: 'assets/raiders_watching.png',
+  r2Tex: 'assets/r2.jpg',
+  wilsonTex: 'assets/wilson.jpg',
+  lightTex: 'assets/light.jpg',
 
   // models
   leia: 'assets/models/leia/Leia/Leia.obj',
   luke: 'assets/models/Luke/Luke yavin.obj',
   r2d2: 'assets/models/R2D2/R2D2.obj',
   landspeeder: 'assets/models/Landspeeder/Landspeeder.obj'
-
 
 }).then(function (resources /*an object containing our keys with the loaded resources*/) {
   init(resources);
@@ -955,16 +1213,16 @@ function initInteraction(canvas) {
     };
   }
   canvas.addEventListener('mousedown', function(event) {
-    mouse.pos = toPos(event);
-    mouse.leftButtonDown = event.button === 0;
+      mouse.pos = toPos(event);
+      mouse.leftButtonDown = event.button === 0;
   });
   canvas.addEventListener('mousemove', function(event) {
     const pos = toPos(event);
     const delta = { x : mouse.pos.x - pos.x, y: mouse.pos.y - pos.y };
-    if (mouse.leftButtonDown) {
+    if (mouse.leftButtonDown && cameraEnabled) {
       //add the relative movement of the mouse to the rotation variables
   		camera.rotation.x -= delta.x / 1000;
-  		camera.rotation.y += delta.y / 1000;
+      camera.rotation.y += delta.y / 1000;
     }
     mouse.pos = pos;
   });
@@ -975,21 +1233,19 @@ function initInteraction(canvas) {
   //register globally
   document.addEventListener('keypress', function(event) {
     //https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent
-    if (event.code === 'KeyR') {
-      camera.rotation.x = 0;
-  		camera.rotation.y = 0;
+    if (event.code === 'KeyC') {
+      cameraEnabled = !cameraEnabled;
     }
   });
 
   // forward/backward movement
-  // TODO not sure if working correctly (passing through some axis)
   document.addEventListener('keydown', function(event) {
-    if(event.code === 'ArrowUp') {
+    if(event.code === 'ArrowUp' && cameraEnabled) {
       camera.position.x -= camera.direction.x * camera.speed;
       camera.position.y -= camera.direction.y * camera.speed;
       camera.position.z -= camera.direction.z * camera.speed;
 
-    } else if(event.code === 'ArrowDown') {
+    } else if(event.code === 'ArrowDown' && cameraEnabled) {
       camera.position.x += camera.direction.x * camera.speed;
       camera.position.y += camera.direction.y * camera.speed;
       camera.position.z += camera.direction.z * camera.speed;
@@ -1043,8 +1299,6 @@ class MyLightNode extends TransformationSGNode {
     }
     const position = this._worldPosition || this.position;
     gl.uniform3f(gl.getUniformLocation(context.shader, this.uniform+'Pos[' + this.index + ']'), position[0], position[1], position[2]);
-    // and for spotlights
-    gl.uniform3f(gl.getUniformLocation(context.shader, this.uniform+'PosOriginal[' + this.index + ']'), this.position[0], this.position[1], this.position[2]);
   }
 
   computeLightPosition(context) {
